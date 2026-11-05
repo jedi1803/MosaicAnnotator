@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "MosaicAnnotator (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "MosaicAnnotator (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
