@@ -433,17 +433,56 @@ namespace MosaicAnnotator
         {
         }
 
+        private void ShadowSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            // The null check prevents crashes during UI initialization
+            ImageCanvas?.Invalidate();
+        }
+
+        private void EdgeModeToggle_Click(object sender, RoutedEventArgs e)
+        {
+            ImageCanvas?.Invalidate();
+        }
+
         private void ImageCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
         {
-            if (_currentImage != null)
+            if (_currentImage == null) return;
+
+            ICanvasImage imageToDraw = _currentImage;
+
+            // 1. Contrast (Win2D ContrastEffect uses -1 to 1, so we map your 0 to 2 slider)
+            if (ContrastSlider != null && ContrastSlider.Value != 1)
             {
-                var contrastEffect = new ContrastEffect
+                imageToDraw = new ContrastEffect
                 {
-                    Source = _currentImage,
-                    Contrast = (float)ContrastSlider.Value
+                    Source = imageToDraw,
+                    Contrast = (float)(ContrastSlider.Value - 1)
                 };
-                args.DrawingSession.DrawImage(contrastEffect);
             }
+
+            // 2. Shadow Lift
+            if (ShadowSlider != null && ShadowSlider.Value > 0)
+            {
+                imageToDraw = new HighlightsAndShadowsEffect
+                {
+                    Source = imageToDraw,
+                    Shadows = (float)ShadowSlider.Value
+                };
+            }
+
+            // 3. X-Ray Edge Detection
+            if (EdgeModeToggle?.IsChecked == true)
+            {
+                imageToDraw = new EdgeDetectionEffect
+                {
+                    Source = imageToDraw,
+                    Amount = 1.0f,
+                    BlurAmount = 0.5f,
+                    OverlayEdges = true
+                };
+            }
+
+            args.DrawingSession.DrawImage(imageToDraw);
         }
 
         // --- MOUSE PRESSED ---

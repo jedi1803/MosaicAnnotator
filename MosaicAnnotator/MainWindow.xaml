@@ -59,8 +59,14 @@
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Grid.Column="6" Margin="20,0,0,0">
+                <!-- 1. Your Original Contrast Slider -->
                 <TextBlock Text="Image Contrast" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 <Slider x:Name="ContrastSlider" Minimum="0" Maximum="2" StepFrequency="0.1" Value="1" Width="150" ValueChanged="ContrastSlider_ValueChanged"/>
+                <!-- 2. New Shadow Lift Slider -->
+                <TextBlock Text="Shadows" VerticalAlignment="Center" Margin="10,0,5,0"/>
+                <Slider x:Name="ShadowSlider" Minimum="0" Maximum="1" StepFrequency="0.1" Value="0" Width="70" ValueChanged="ShadowSlider_ValueChanged"/>
+                <!-- 3. New X-Ray Toggle -->
+                <ToggleButton x:Name="EdgeModeToggle" Content="X-Ray" Margin="10,0,0,0" Padding="5,4" Click="EdgeModeToggle_Click" />
             </StackPanel>
 
             <Button x:Name="ExportButton" Content="Export Crop &amp; Mask" Click="ExportButton_Click" Grid.Column="7" Margin="20,0,0,0"/>
