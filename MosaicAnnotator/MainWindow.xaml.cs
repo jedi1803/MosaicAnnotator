@@ -340,7 +340,7 @@ namespace MosaicAnnotator
             if (_isRegionMode) UpdateRegionRectSize();
         }
 
-        private void ExportButton_Click(object sender, RoutedEventArgs e)
+        private async void ExportButton_Click(object sender, RoutedEventArgs e)
         {
             if (_currentImage == null || _currentIndex < 0 || _imageFiles.Count == 0) return;
 
@@ -379,6 +379,36 @@ namespace MosaicAnnotator
             string fullSavePath = System.IO.Path.Combine(jsonDir, jsonFileName);
 
             System.IO.File.WriteAllText(fullSavePath, jsonString);
+
+            // --- NEW WORKFLOW LOGIC ---
+
+            // 1. Always exit Mosaic Mode back to Region Mode
+            ExitMosaicMode();
+
+            // 2. Scan forward to find the next image that DOES NOT have a JSON file
+            int nextUnannotatedIndex = -1;
+            for (int i = _currentIndex + 1; i < _imageFiles.Count; i++)
+            {
+                string checkImgPath = _imageFiles[i].Path;
+                string checkImgDir = System.IO.Path.GetDirectoryName(checkImgPath)!;
+                string checkJsonDir = System.IO.Path.Combine(checkImgDir, "json");
+                string checkJsonFile = System.IO.Path.GetFileNameWithoutExtension(checkImgPath) + "_mosaic.json";
+                string checkFullJsonPath = System.IO.Path.Combine(checkJsonDir, checkJsonFile);
+
+                if (!System.IO.File.Exists(checkFullJsonPath))
+                {
+                    nextUnannotatedIndex = i;
+                    break;
+                }
+            }
+
+            // 3. If an un-annotated image exists, automatically load it. 
+            // If none exist (or if working with a single file), just wait.
+            if (nextUnannotatedIndex != -1)
+            {
+                _currentIndex = nextUnannotatedIndex;
+                await DisplaySelectedImageAsync();
+            }
         }
 
         private void ContrastSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
