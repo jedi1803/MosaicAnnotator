@@ -202,7 +202,7 @@ namespace MosaicAnnotator
             LoadExistingJsonData();
 
             // Reset the camera to view the full image perfectly centered
-            ZoomToFitImage();
+            await ZoomToFitImage();
         }
 
         private void LoadExistingJsonData()
@@ -337,19 +337,24 @@ namespace MosaicAnnotator
             Canvas.SetTop(RegionRect, _regionY);
         }
 
-        private void CropSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private async void CropSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_currentImage == null || _cropSizes == null) return;
+            try
+            {
+                if (_currentImage == null || _cropSizes == null) return;
 
-            if (_isRegionMode)
-            {
-                // Just resize the box, keep the camera centered on the full image
-                UpdateRegionRectSize();
+                if (_isRegionMode)
+                {
+                    UpdateRegionRectSize();
+                }
+                else if (_isMosaicMode)
+                {
+                    await ZoomToFitCropBox();
+                }
             }
-            else if (_isMosaicMode)
+            catch (Exception ex)
             {
-                // Smoothly adjust the zoom and center on the new box size
-                ZoomToFitCropBox();
+                System.Diagnostics.Debug.WriteLine($"Zoom error: {ex.Message}");
             }
         }
 
@@ -396,7 +401,7 @@ namespace MosaicAnnotator
             // --- NEW WORKFLOW LOGIC ---
 
             // 1. Always exit Mosaic Mode back to Region Mode
-            ExitMosaicMode();
+            await ExitMosaicMode();
 
             // 2. Scan forward to find the next image that DOES NOT have a JSON file
             int nextUnannotatedIndex = -1;
@@ -486,7 +491,7 @@ namespace MosaicAnnotator
         }
 
         // --- MOUSE PRESSED ---
-        private void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        private async void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(OverlayCanvas);
             var pos = point.Position;
@@ -608,7 +613,7 @@ namespace MosaicAnnotator
                 EnterMosaicMode();
 
                 // Zoom and center the camera after the mode is fully initialized
-                ZoomToFitCropBox();
+                await ZoomToFitCropBox();
             }
         }
 
@@ -787,12 +792,12 @@ namespace MosaicAnnotator
             }
         }
 
-        private void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+        private async void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
         {
             if (e.Key == Windows.System.VirtualKey.Escape && _isMosaicMode)
             {
-                ExitMosaicMode();
                 e.Handled = true;
+                await ExitMosaicMode();
             }
         }
 
@@ -825,7 +830,7 @@ namespace MosaicAnnotator
             ClearButton.IsEnabled = false;
         }
 
-        private void ExitMosaicMode()
+        private async Task ExitMosaicMode()
         {
             if (_currentImage == null) return;
 
@@ -841,10 +846,10 @@ namespace MosaicAnnotator
             ClearButton.IsEnabled = true;
 
             // This handles the math, the margins, and the ChangeView automatically now
-            ZoomToFitImage();
+            await ZoomToFitImage();
         }
 
-        private async void ZoomToFitCropBox()
+        private async Task ZoomToFitCropBox()
         {
             if (_currentImage == null || _cropSizes == null || ImageScrollViewer.ViewportWidth == 0) return;
 
@@ -883,7 +888,7 @@ namespace MosaicAnnotator
             ImageScrollViewer.ChangeView(hOffset, vOffset, targetZoom);
         }
 
-        private async void ZoomToFitImage()
+        private async Task ZoomToFitImage()
         {
             if (_currentImage == null || ImageScrollViewer.ViewportWidth == 0) return;
 
