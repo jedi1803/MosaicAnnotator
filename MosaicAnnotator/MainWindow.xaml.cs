@@ -64,7 +64,6 @@ namespace MosaicAnnotator
 
         private List<MosaicEdge> _mosaicEdges = new List<MosaicEdge>();
         private MosaicEdge? _activeEdge = null;
-        private bool _nextEdgeIsVertical = false;
 
         private enum DragMode { None, Body, StartHandle, EndHandle }
         private DragMode _dragMode = DragMode.None;
@@ -170,8 +169,8 @@ namespace MosaicAnnotator
             OverlayCanvas.Width = _currentImage.SizeInPixels.Width;
             OverlayCanvas.Height = _currentImage.SizeInPixels.Height;
 
-            // Force the UI to update its dimensions
-            WorkspaceGrid.UpdateLayout();
+            // Force the UI to update its dimensions using the new XAML name
+            ImageWorkArea.UpdateLayout();
 
             // Calculate the zoom factor needed to fit the whole image on screen
             double scaleX = ImageScrollViewer.ActualWidth / _currentImage.SizeInPixels.Width;
@@ -201,6 +200,9 @@ namespace MosaicAnnotator
 
             // Attempt to restore progress if a JSON file already exists for this image
             LoadExistingJsonData();
+
+            // Reset the camera to view the full image perfectly centered
+            ZoomToFitImage();
         }
 
         private void LoadExistingJsonData()
@@ -337,7 +339,18 @@ namespace MosaicAnnotator
 
         private void CropSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (_isRegionMode) UpdateRegionRectSize();
+            if (_currentImage == null || _cropSizes == null) return;
+
+            if (_isRegionMode)
+            {
+                // Just resize the box, keep the camera centered on the full image
+                UpdateRegionRectSize();
+            }
+            else if (_isMosaicMode)
+            {
+                // Smoothly adjust the zoom and center on the new box size
+                ZoomToFitCropBox();
+            }
         }
 
         private async void ExportButton_Click(object sender, RoutedEventArgs e)
@@ -554,6 +567,9 @@ namespace MosaicAnnotator
                 _isMosaicMode = true;
                 RegionRect.Visibility = Visibility.Collapsed;
                 EnterMosaicMode();
+
+                // Zoom and center the camera after the mode is fully initialized
+                ZoomToFitCropBox();
             }
         }
 
@@ -780,16 +796,73 @@ namespace MosaicAnnotator
             ImageCanvas.Clip = null;
             RegionRect.Visibility = Visibility.Visible;
 
-            double scaleX = ImageScrollViewer.ActualWidth / _currentImage.SizeInPixels.Width;
-            double scaleY = ImageScrollViewer.ActualHeight / _currentImage.SizeInPixels.Height;
-            float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
-
-            ImageScrollViewer.ChangeView(null, null, zoomFactor);
-
             PrevButton.IsEnabled = _currentIndex > 0;
             NextButton.IsEnabled = _currentIndex < _imageFiles.Count - 1;
             LoadDirectoryButton.IsEnabled = true;
             ClearButton.IsEnabled = true;
+
+            // This handles the math, the margins, and the ChangeView automatically now
+            ZoomToFitImage();
+        }
+
+        // Use this for Region Mode (Image Load / Exit Mosaic)
+        private void ZoomToFitImage()
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_currentImage == null || ImageScrollViewer.ViewportWidth == 0) return;
+
+                // Reset alignment and margins so the image perfectly centers itself natively
+                ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Center;
+                ImageWorkArea.VerticalAlignment = VerticalAlignment.Center;
+                ImageWorkArea.Margin = new Thickness(0);
+
+                ImageWorkArea.UpdateLayout();
+                ImageScrollViewer.UpdateLayout();
+
+                // Calculate the zoom factor to fit the whole image
+                double scaleX = ImageScrollViewer.ViewportWidth / _currentImage.SizeInPixels.Width;
+                double scaleY = ImageScrollViewer.ViewportHeight / _currentImage.SizeInPixels.Height;
+                float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
+
+                // Zoom out to fit the screen
+                ImageScrollViewer.ChangeView(null, null, zoomFactor);
+            });
+        }
+
+        // Use this for Mosaic Mode (Zooming into the crop box)
+        private void ZoomToFitCropBox()
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_currentImage == null || _cropSizes == null || ImageScrollViewer.ViewportWidth == 0) return;
+
+                double cropSize = _cropSizes[CropSizeComboBox.SelectedIndex];
+
+                // Switch to Left/Top alignment and add padding for edge over-scrolling
+                ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Left;
+                ImageWorkArea.VerticalAlignment = VerticalAlignment.Top;
+
+                double marginX = ImageScrollViewer.ViewportWidth / 2.0;
+                double marginY = ImageScrollViewer.ViewportHeight / 2.0;
+                ImageWorkArea.Margin = new Thickness(marginX, marginY, marginX, marginY);
+
+                ImageWorkArea.UpdateLayout();
+                ImageScrollViewer.UpdateLayout();
+
+                // Calculate the zoom to fit the crop box
+                double scaleX = ImageScrollViewer.ViewportWidth / cropSize;
+                double scaleY = ImageScrollViewer.ViewportHeight / cropSize;
+                float targetZoom = (float)Math.Min(scaleX, scaleY) * 0.90f;
+
+                double cropCenterX = _regionX + (cropSize / 2.0);
+                double cropCenterY = _regionY + (cropSize / 2.0);
+
+                double hOffset = (cropCenterX * targetZoom);
+                double vOffset = (cropCenterY * targetZoom);
+
+                ImageScrollViewer.ChangeView(hOffset, vOffset, targetZoom);
+            });
         }
     }
 }

@@ -35,6 +35,9 @@ namespace MosaicAnnotator
         public App()
         {
             InitializeComponent();
+
+            // Add this line to catch silent crashes
+            this.UnhandledException += App_UnhandledException;
         }
 
         /// <summary>
@@ -45,6 +48,17 @@ namespace MosaicAnnotator
         {
             _window = new MainWindow();
             _window.Activate();
+        }
+
+        // Add this method to intercept the crash
+        private void App_UnhandledException(object sender, Microsoft.UI.Xaml.UnhandledExceptionEventArgs e)
+        {
+            // Prevent the app from instantly closing
+            e.Handled = true;
+
+            // Print the exact error and line number to the Visual Studio / Cursor Output window
+            System.Diagnostics.Debug.WriteLine($"SILENT CRASH INTERCEPTED: {e.Exception.Message}");
+            System.Diagnostics.Debug.WriteLine($"STACK TRACE: {e.Exception.StackTrace}");
         }
     }
 }
