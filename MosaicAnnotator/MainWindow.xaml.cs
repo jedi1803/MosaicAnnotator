@@ -549,19 +549,17 @@ namespace MosaicAnnotator
 
             if (_isMosaicMode && _activeEdge != null)
             {
-                var points = e.GetIntermediatePoints(OverlayCanvas);
-                foreach (var pt in points)
-                {
-                    var ptPos = pt.Position;
-                    double dx = ptPos.X - _lastMousePos.X;
-                    double dy = ptPos.Y - _lastMousePos.Y;
+                // Calculate the distance from the last known mouse position once
+                double dx = pos.X - _lastMousePos.X;
+                double dy = pos.Y - _lastMousePos.Y;
 
-                    if (_dragMode == DragMode.Body) _activeEdge.Move(dx, dy);
-                    else if (_dragMode == DragMode.StartHandle) _activeEdge.ResizeStart(dx, dy);
-                    else if (_dragMode == DragMode.EndHandle) _activeEdge.ResizeEnd(dx, dy);
+                // Move or resize the line exactly once per frame
+                if (_dragMode == DragMode.Body) _activeEdge.Move(dx, dy);
+                else if (_dragMode == DragMode.StartHandle) _activeEdge.ResizeStart(dx, dy);
+                else if (_dragMode == DragMode.EndHandle) _activeEdge.ResizeEnd(dx, dy);
 
-                    _lastMousePos = ptPos;
-                }
+                // Update the tracker for the next frame
+                _lastMousePos = pos;
                 return;
             }
 
