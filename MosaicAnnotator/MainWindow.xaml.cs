@@ -844,64 +844,64 @@ namespace MosaicAnnotator
             ZoomToFitImage();
         }
 
-        // Use this for Region Mode (Image Load / Exit Mosaic)
-        private void ZoomToFitImage()
+        private async void ZoomToFitCropBox()
         {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (_currentImage == null || ImageScrollViewer.ViewportWidth == 0) return;
+            if (_currentImage == null || _cropSizes == null || ImageScrollViewer.ViewportWidth == 0) return;
 
-                // Reset alignment and margins so the image perfectly centers itself natively
-                ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Center;
-                ImageWorkArea.VerticalAlignment = VerticalAlignment.Center;
-                ImageWorkArea.Margin = new Thickness(0);
+            double cropSize = _cropSizes[CropSizeComboBox.SelectedIndex];
 
-                ImageWorkArea.UpdateLayout();
-                ImageScrollViewer.UpdateLayout();
+            ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Left;
+            ImageWorkArea.VerticalAlignment = VerticalAlignment.Top;
 
-                // Calculate the zoom factor to fit the whole image
-                double scaleX = ImageScrollViewer.ViewportWidth / _currentImage.SizeInPixels.Width;
-                double scaleY = ImageScrollViewer.ViewportHeight / _currentImage.SizeInPixels.Height;
-                float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
+            double marginX = ImageScrollViewer.ViewportWidth / 2.0;
+            double marginY = ImageScrollViewer.ViewportHeight / 2.0;
+            ImageWorkArea.Margin = new Thickness(marginX, marginY, marginX, marginY);
 
-                // Zoom out to fit the screen
-                ImageScrollViewer.ChangeView(null, null, zoomFactor);
-            });
+            // Force the UI to evaluate the layout
+            ImageWorkArea.UpdateLayout();
+            ImageScrollViewer.UpdateLayout();
+
+            // The Magic Fix: Yield the UI thread for 50ms so the ScrollViewer 
+            // actually updates its internal scrollable boundaries before we pan.
+            await Task.Delay(50);
+
+            double scaleX = ImageScrollViewer.ViewportWidth / cropSize;
+            double scaleY = ImageScrollViewer.ViewportHeight / cropSize;
+            float targetZoom = (float)Math.Min(scaleX, scaleY) * 0.90f;
+
+            double cropCenterX = _regionX + (cropSize / 2.0);
+            double cropCenterY = _regionY + (cropSize / 2.0);
+
+            // The Corrected Math: Multiply the margin by the zoom factor 
+            // because WinUI scales the padding too!
+            double targetX = (marginX + cropCenterX) * targetZoom;
+            double targetY = (marginY + cropCenterY) * targetZoom;
+
+            double hOffset = targetX - (ImageScrollViewer.ViewportWidth / 2.0);
+            double vOffset = targetY - (ImageScrollViewer.ViewportHeight / 2.0);
+
+            ImageScrollViewer.ChangeView(hOffset, vOffset, targetZoom);
         }
 
-        // Use this for Mosaic Mode (Zooming into the crop box)
-        private void ZoomToFitCropBox()
+        private async void ZoomToFitImage()
         {
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (_currentImage == null || _cropSizes == null || ImageScrollViewer.ViewportWidth == 0) return;
+            if (_currentImage == null || ImageScrollViewer.ViewportWidth == 0) return;
 
-                double cropSize = _cropSizes[CropSizeComboBox.SelectedIndex];
+            ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Center;
+            ImageWorkArea.VerticalAlignment = VerticalAlignment.Center;
+            ImageWorkArea.Margin = new Thickness(0);
 
-                // Switch to Left/Top alignment and add padding for edge over-scrolling
-                ImageWorkArea.HorizontalAlignment = HorizontalAlignment.Left;
-                ImageWorkArea.VerticalAlignment = VerticalAlignment.Top;
+            ImageWorkArea.UpdateLayout();
+            ImageScrollViewer.UpdateLayout();
 
-                double marginX = ImageScrollViewer.ViewportWidth / 2.0;
-                double marginY = ImageScrollViewer.ViewportHeight / 2.0;
-                ImageWorkArea.Margin = new Thickness(marginX, marginY, marginX, marginY);
+            // Same 50ms delay required here so it doesn't get trapped by the old Mosaic margins
+            await Task.Delay(50);
 
-                ImageWorkArea.UpdateLayout();
-                ImageScrollViewer.UpdateLayout();
+            double scaleX = ImageScrollViewer.ViewportWidth / _currentImage.SizeInPixels.Width;
+            double scaleY = ImageScrollViewer.ViewportHeight / _currentImage.SizeInPixels.Height;
+            float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
 
-                // Calculate the zoom to fit the crop box
-                double scaleX = ImageScrollViewer.ViewportWidth / cropSize;
-                double scaleY = ImageScrollViewer.ViewportHeight / cropSize;
-                float targetZoom = (float)Math.Min(scaleX, scaleY) * 0.90f;
-
-                double cropCenterX = _regionX + (cropSize / 2.0);
-                double cropCenterY = _regionY + (cropSize / 2.0);
-
-                double hOffset = (cropCenterX * targetZoom);
-                double vOffset = (cropCenterY * targetZoom);
-
-                ImageScrollViewer.ChangeView(hOffset, vOffset, targetZoom);
-            });
+            ImageScrollViewer.ChangeView(null, null, zoomFactor);
         }
     }
 }
