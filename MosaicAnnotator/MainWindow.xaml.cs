@@ -78,17 +78,13 @@ namespace MosaicAnnotator
 
         private async void LoadImageButton_Click(object sender, RoutedEventArgs e)
         {
-            var picker = new FileOpenPicker();
-            picker.ViewMode = PickerViewMode.Thumbnail;
-            picker.FileTypeFilter.Add(".png");
-            picker.FileTypeFilter.Add(".jpg");
-
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            string? selectedPath = NativeInterop.PickFile(hwnd);
 
-            var file = await picker.PickSingleFileAsync();
-            if (file != null)
+            if (!string.IsNullOrEmpty(selectedPath))
             {
+                var file = await StorageFile.GetFileFromPathAsync(selectedPath);
+
                 _imageFiles.Clear();
                 _imageFiles.Add(file);
                 _currentIndex = 0;
@@ -98,23 +94,18 @@ namespace MosaicAnnotator
 
         private async void LoadDirectoryButton_Click(object sender, RoutedEventArgs e)
         {
-            var picker = new FolderPicker();
-            picker.ViewMode = PickerViewMode.List;
-            picker.FileTypeFilter.Add("*");
-
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            string? selectedPath = NativeInterop.PickFolder(hwnd);
 
-            var folder = await picker.PickSingleFolderAsync();
-            if (folder != null)
+            if (!string.IsNullOrEmpty(selectedPath))
             {
+                var folder = await StorageFolder.GetFolderFromPathAsync(selectedPath);
                 var files = await folder.GetFilesAsync();
                 _imageFiles.Clear();
 
                 foreach (var file in files)
                 {
                     string ext = file.FileType.ToLower();
-                    // Filter out system files or non-images
                     if (ext == ".png" || ext == ".jpg")
                     {
                         _imageFiles.Add(file);
@@ -907,6 +898,101 @@ namespace MosaicAnnotator
             float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
 
             ImageScrollViewer.ChangeView(null, null, zoomFactor);
+        }
+    }
+
+    public static class NativeInterop
+    {
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        public struct COMDLG_FILTERSPEC
+        {
+            public string pszName;
+            public string pszSpec;
+        }
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
+        private class FileOpenDialog { }
+
+        // Updated with the correct d57c7288 GUID for .NET 8
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("d57c7288-d4ad-4768-be02-9d969532d960"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IFileDialog
+        {
+            [System.Runtime.InteropServices.PreserveSig] int Show([System.Runtime.InteropServices.In] IntPtr parent);
+
+            // Updated signature to accept the file filter struct array
+            void SetFileTypes([System.Runtime.InteropServices.In] uint cFileTypes, [System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPArray)] COMDLG_FILTERSPEC[] rgFilterSpec);
+
+            void SetFileTypeIndex([System.Runtime.InteropServices.In] uint iFileType);
+            void GetFileTypeIndex(out uint piFileType);
+            void Advise([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] object pfde, out uint pdwCookie);
+            void Unadvise([System.Runtime.InteropServices.In] uint dwCookie);
+            void SetOptions([System.Runtime.InteropServices.In] uint fos);
+            void GetOptions(out uint pfos);
+            void SetDefaultFolder([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] object psi);
+            void SetFolder([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] object psi);
+            void GetFolder([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] out object ppsi);
+            void GetCurrentSelection([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] out object ppsi);
+            void SetFileName([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszName);
+            void GetFileName([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] out string pszName);
+            void SetTitle([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszTitle);
+            void SetOkButtonLabel([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszText);
+            void SetFileNameLabel([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszLabel);
+            void GetResult([System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] out IShellItem ppsi);
+            void AddPlace([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] object psi, int fdap);
+            void SetDefaultExtension([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] string pszDefaultExtension);
+            void Close([System.Runtime.InteropServices.In] int hr);
+            void SetClientGuid([System.Runtime.InteropServices.In] ref Guid guid);
+            void ClearClientData();
+            void SetFilter([System.Runtime.InteropServices.In] IntPtr pFilter);
+        }
+
+        [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IShellItem
+        {
+            void BindToHandler([System.Runtime.InteropServices.In] IntPtr pbc, [System.Runtime.InteropServices.In] ref Guid bhid, [System.Runtime.InteropServices.In] ref Guid riid, out IntPtr ppv);
+            void GetParent(out IShellItem ppsi);
+            void GetDisplayName([System.Runtime.InteropServices.In] int sigdnName, [System.Runtime.InteropServices.Out, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPWStr)] out string ppszName);
+            void GetAttributes([System.Runtime.InteropServices.In] uint sfgaoMask, out uint psfgaoAttribs);
+            void Compare([System.Runtime.InteropServices.In] IShellItem psi, [System.Runtime.InteropServices.In] uint hint, out int piOrder);
+        }
+
+        public static string? PickFolder(IntPtr hwnd)
+        {
+            var dialog = (IFileDialog)new FileOpenDialog();
+            dialog.GetOptions(out uint options);
+            dialog.SetOptions(options | 0x00000020); // FOS_PICKFOLDERS
+
+            if (dialog.Show(hwnd) == 0) // S_OK
+            {
+                dialog.GetResult(out IShellItem item);
+                item.GetDisplayName(unchecked((int)0x80058000), out string path); // SIGDN_FILESYSPATH
+                return path;
+            }
+            return null;
+        }
+
+        public static string? PickFile(IntPtr hwnd)
+        {
+            var dialog = (IFileDialog)new FileOpenDialog();
+
+            // Set image filters
+            var extensions = new COMDLG_FILTERSPEC[]
+            {
+            new COMDLG_FILTERSPEC { pszName = "Images", pszSpec = "*.png;*.jpg;*.jpeg" },
+            new COMDLG_FILTERSPEC { pszName = "All Files", pszSpec = "*.*" }
+            };
+            dialog.SetFileTypes((uint)extensions.Length, extensions);
+
+            dialog.GetOptions(out uint options);
+            dialog.SetOptions(options | 0x00000040); // FOS_FORCEFILESYSTEM
+
+            if (dialog.Show(hwnd) == 0) // S_OK
+            {
+                dialog.GetResult(out IShellItem item);
+                item.GetDisplayName(unchecked((int)0x80058000), out string path); // SIGDN_FILESYSPATH
+                return path;
+            }
+            return null;
         }
     }
 }
