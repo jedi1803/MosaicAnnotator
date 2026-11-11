@@ -5,22 +5,13 @@ using Microsoft.Graphics.Canvas.UI.Xaml;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Navigation;
-using Microsoft.VisualBasic;
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Windows.Foundation;
-using Windows.Foundation.Collections;
 using Windows.Storage;
-using Windows.Storage.Pickers;
 
 namespace MosaicAnnotator
 {
@@ -48,12 +39,10 @@ namespace MosaicAnnotator
 
     public sealed partial class MainWindow : Window
     {
-        // Holds the hardware-accelerated image
         private CanvasBitmap? _currentImage;
         private List<StorageFile> _imageFiles = new List<StorageFile>();
         private int _currentIndex = -1;
 
-        // Region Mode State
         private bool _isRegionMode = false;
         private bool _isMosaicMode = false;
         private bool _isDraggingRegion = false;
@@ -70,6 +59,12 @@ namespace MosaicAnnotator
 
         private bool _isSelectingLineEnds = false;
         private Windows.Foundation.Point _selectionStartPos;
+        private Windows.Foundation.Rect _cornerSelectionRect;
+
+        private bool _isPanning = false;
+        private Windows.Foundation.Point _lastPanScreenPos;
+
+        private HashSet<MosaicEdge> _selectedEdges = new HashSet<MosaicEdge>();
 
         public MainWindow()
         {
@@ -84,7 +79,6 @@ namespace MosaicAnnotator
             if (!string.IsNullOrEmpty(selectedPath))
             {
                 var file = await StorageFile.GetFileFromPathAsync(selectedPath);
-
                 _imageFiles.Clear();
                 _imageFiles.Add(file);
                 _currentIndex = 0;
@@ -154,45 +148,25 @@ namespace MosaicAnnotator
                 _currentImage = await CanvasBitmap.LoadAsync(ImageCanvas, stream);
             }
 
-            // Adjust the Canvas size to match the image precisely
             ImageCanvas.Width = _currentImage.SizeInPixels.Width;
             ImageCanvas.Height = _currentImage.SizeInPixels.Height;
             OverlayCanvas.Width = _currentImage.SizeInPixels.Width;
             OverlayCanvas.Height = _currentImage.SizeInPixels.Height;
 
-            // Force the UI to update its dimensions using the new XAML name
             ImageWorkArea.UpdateLayout();
 
-            // Calculate the zoom factor needed to fit the whole image on screen
-            double scaleX = ImageScrollViewer.ActualWidth / _currentImage.SizeInPixels.Width;
-            double scaleY = ImageScrollViewer.ActualHeight / _currentImage.SizeInPixels.Height;
-            float zoomFactor = (float)Math.Min(scaleX, scaleY);
-
-            // Zoom out to fit the screen, leaving a 5% margin
-            ImageScrollViewer.ChangeView(null, null, zoomFactor * 0.95f);
-
-            // Update Navigation UI
             FileStatusText.Text = $"{_currentIndex + 1} / {_imageFiles.Count}";
             FileNameText.Text = file.Name;
 
-            // We explicitly re-evaluate these in case they were disabled by Mosaic Mode
             PrevButton.IsEnabled = _currentIndex > 0;
             NextButton.IsEnabled = _currentIndex < _imageFiles.Count - 1;
             LoadDirectoryButton.IsEnabled = true;
 
-            // Trigger a redraw
             ImageCanvas.Invalidate();
 
-            // Start Region Mode
             _isRegionMode = true;
             UpdateRegionRectSize();
-            RegionRect.Visibility = Visibility.Visible;
-            RegionRect.Stroke = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Lime);
-
-            // Attempt to restore progress if a JSON file already exists for this image
             LoadExistingJsonData();
-
-            // Reset the camera to view the full image perfectly centered
             await ZoomToFitImage();
         }
 
@@ -206,32 +180,23 @@ namespace MosaicAnnotator
             string jsonFileName = System.IO.Path.GetFileNameWithoutExtension(currentImagePath) + "_mosaic.json";
             string fullJsonPath = System.IO.Path.Combine(jsonDir, jsonFileName);
 
-            // 1. Reset current canvas state before loading
-            foreach (var edge in _mosaicEdges)
-            {
-                edge.RemoveFromCanvas(OverlayCanvas);
-            }
             _mosaicEdges.Clear();
-
             _isMosaicMode = false;
             _isRegionMode = true;
-            RegionRect.Visibility = Visibility.Collapsed;
 
-            // 2. Check if previous annotation exists
             if (System.IO.File.Exists(fullJsonPath))
             {
                 try
                 {
                     string jsonString = System.IO.File.ReadAllText(fullJsonPath);
-                    var projectData = JsonSerializer.Deserialize<MosaicProjectData>(jsonString);
+                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var projectData = JsonSerializer.Deserialize<MosaicProjectData>(jsonString, options);
 
                     if (projectData != null)
                     {
-                        // Restore Crop Window
                         _regionX = projectData.CropWindow.X;
                         _regionY = projectData.CropWindow.Y;
 
-                        // Match ComboBox to saved size
                         for (int i = 0; i < _cropSizes.Length; i++)
                         {
                             if (_cropSizes[i] == projectData.CropWindow.Size)
@@ -241,23 +206,13 @@ namespace MosaicAnnotator
                             }
                         }
 
-                        // Restore Lines
                         foreach (var lineData in projectData.MosaicLines)
                         {
-                            var edge = new MosaicEdge(lineData.IsVertical, lineData.X, lineData.Y, lineData.Length);
-                            edge.AddToCanvas(OverlayCanvas);
-                            _mosaicEdges.Add(edge);
+                            _mosaicEdges.Add(new MosaicEdge(lineData.IsVertical, lineData.X, lineData.Y, lineData.Length));
                         }
 
-                        // Always stay in Region Mode initially so the user sees the full image
                         _isRegionMode = true;
                         _isMosaicMode = false;
-
-                        RegionRect.Width = projectData.CropWindow.Size;
-                        RegionRect.Height = projectData.CropWindow.Size;
-                        Canvas.SetLeft(RegionRect, _regionX);
-                        Canvas.SetTop(RegionRect, _regionY);
-                        RegionRect.Visibility = Visibility.Visible;
                     }
                 }
                 catch (Exception ex)
@@ -265,25 +220,18 @@ namespace MosaicAnnotator
                     System.Diagnostics.Debug.WriteLine($"Failed to load existing JSON: {ex.Message}");
                 }
             }
-            else
-            {
-                // Ensure RegionRect is shown if no JSON existed
-                RegionRect.Visibility = Visibility.Visible;
-            }
         }
 
         private void ClearButton_Click(object sender, RoutedEventArgs e)
         {
             if (_currentImage == null || _currentIndex < 0 || _imageFiles.Count == 0) return;
 
-            // 1. Calculate the JSON path
             string currentImagePath = _imageFiles[_currentIndex].Path;
             string imageDir = System.IO.Path.GetDirectoryName(currentImagePath)!;
             string jsonDir = System.IO.Path.Combine(imageDir, "json");
             string jsonFileName = System.IO.Path.GetFileNameWithoutExtension(currentImagePath) + "_mosaic.json";
             string fullJsonPath = System.IO.Path.Combine(jsonDir, jsonFileName);
 
-            // 2. If it exists, force delete it
             if (System.IO.File.Exists(fullJsonPath))
             {
                 try
@@ -297,18 +245,11 @@ namespace MosaicAnnotator
                 }
             }
 
-            // 3. Clear any mosaic lines from the UI and memory
-            foreach (var edge in _mosaicEdges)
-            {
-                edge.RemoveFromCanvas(OverlayCanvas);
-            }
             _mosaicEdges.Clear();
-
-            // 4. Ensure we are in Region Mode with the current square size and location
             _isMosaicMode = false;
             _isRegionMode = true;
             UpdateRegionRectSize();
-            RegionRect.Visibility = Visibility.Visible;
+            ImageCanvas.Invalidate();
         }
 
         private void UpdateRegionRectSize()
@@ -322,10 +263,7 @@ namespace MosaicAnnotator
             if (_regionX + size > imgWidth) _regionX = Math.Max(0, imgWidth - size);
             if (_regionY + size > imgHeight) _regionY = Math.Max(0, imgHeight - size);
 
-            RegionRect.Width = size;
-            RegionRect.Height = size;
-            Canvas.SetLeft(RegionRect, _regionX);
-            Canvas.SetTop(RegionRect, _regionY);
+            ImageCanvas?.Invalidate();
         }
 
         private async void CropSizeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -389,12 +327,8 @@ namespace MosaicAnnotator
 
             System.IO.File.WriteAllText(fullSavePath, jsonString);
 
-            // --- NEW WORKFLOW LOGIC ---
-
-            // 1. Always exit Mosaic Mode back to Region Mode
             await ExitMosaicMode();
 
-            // 2. Scan forward to find the next image that DOES NOT have a JSON file
             int nextUnannotatedIndex = -1;
             for (int i = _currentIndex + 1; i < _imageFiles.Count; i++)
             {
@@ -411,8 +345,6 @@ namespace MosaicAnnotator
                 }
             }
 
-            // 3. If an un-annotated image exists, automatically load it. 
-            // If none exist (or if working with a single file), just wait.
             if (nextUnannotatedIndex != -1)
             {
                 _currentIndex = nextUnannotatedIndex;
@@ -420,175 +352,273 @@ namespace MosaicAnnotator
             }
         }
 
-        private void ContrastSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
-        {
-            ImageCanvas?.Invalidate();
-        }
+        private void ContrastSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { ImageCanvas?.Invalidate(); }
+        private void ShadowSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { ImageCanvas?.Invalidate(); }
+        private void EdgeModeToggle_Click(object sender, RoutedEventArgs e) { ImageCanvas?.Invalidate(); }
+        private void ImageCanvas_CreateResources(CanvasControl sender, CanvasCreateResourcesEventArgs args) { }
 
-        private void ImageCanvas_CreateResources(CanvasControl sender, CanvasCreateResourcesEventArgs args)
-        {
-        }
-
-        private void ShadowSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
-        {
-            // The null check prevents crashes during UI initialization
-            ImageCanvas?.Invalidate();
-        }
-
-        private void EdgeModeToggle_Click(object sender, RoutedEventArgs e)
-        {
-            ImageCanvas?.Invalidate();
-        }
-
+        // --- PURE GPU RENDER LOOP (No custom math matrix needed) ---
         private void ImageCanvas_Draw(CanvasControl sender, CanvasDrawEventArgs args)
         {
             if (_currentImage == null) return;
 
             ICanvasImage imageToDraw = _currentImage;
 
-            // 1. Contrast (Win2D ContrastEffect uses -1 to 1, so we map your 0 to 2 slider)
             if (ContrastSlider != null && ContrastSlider.Value != 1)
-            {
-                imageToDraw = new ContrastEffect
-                {
-                    Source = imageToDraw,
-                    Contrast = (float)(ContrastSlider.Value - 1)
-                };
-            }
+                imageToDraw = new ContrastEffect { Source = imageToDraw, Contrast = (float)(ContrastSlider.Value - 1) };
 
-            // 2. Shadow Lift
             if (ShadowSlider != null && ShadowSlider.Value > 0)
-            {
-                imageToDraw = new HighlightsAndShadowsEffect
-                {
-                    Source = imageToDraw,
-                    Shadows = (float)ShadowSlider.Value
-                };
-            }
+                imageToDraw = new HighlightsAndShadowsEffect { Source = imageToDraw, Shadows = (float)ShadowSlider.Value };
 
-            // 3. X-Ray Edge Detection
             if (EdgeModeToggle?.IsChecked == true)
-            {
-                imageToDraw = new EdgeDetectionEffect
-                {
-                    Source = imageToDraw,
-                    Amount = 1.0f,
-                    BlurAmount = 0.5f,
-                    OverlayEdges = true
-                };
-            }
+                imageToDraw = new EdgeDetectionEffect { Source = imageToDraw, Amount = 1.0f, BlurAmount = 0.5f, OverlayEdges = true };
 
             args.DrawingSession.DrawImage(imageToDraw);
-        }
 
-        // --- MOUSE PRESSED ---
-        private async void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
-        {
-            var point = e.GetCurrentPoint(OverlayCanvas);
-            var pos = point.Position;
+            if (_isRegionMode)
+            {
+                int size = _cropSizes[CropSizeComboBox.SelectedIndex];
+                args.DrawingSession.FillRectangle((float)_regionX, (float)_regionY, size, size, Windows.UI.Color.FromArgb(16, 0, 255, 0));
+                args.DrawingSession.DrawRectangle((float)_regionX, (float)_regionY, size, size, Microsoft.UI.Colors.Lime, 2.0f);
+            }
+
+            foreach (var edge in _mosaicEdges)
+            {
+                float x1 = (float)edge.X;
+                float y1 = (float)edge.Y;
+                float x2 = edge.IsVertical ? x1 : x1 + (float)edge.Length;
+                float y2 = edge.IsVertical ? y1 + (float)edge.Length : y1;
+
+                var color = (_activeEdge == edge || _selectedEdges.Contains(edge)) ? Microsoft.UI.Colors.Yellow : Microsoft.UI.Colors.Lime;
+
+                args.DrawingSession.DrawLine(x1, y1, x2, y2, color, 2.0f);
+                //args.DrawingSession.FillCircle(x1, y1, 4.0f, Microsoft.UI.Colors.White);
+                //args.DrawingSession.FillCircle(x2, y2, 4.0f, Microsoft.UI.Colors.White);
+            }
 
             if (_isMosaicMode)
             {
-                // Check keys FIRST
-                var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift);
-                bool isShiftPressed = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+                if (_isSelectingLineEnds)
+                {
+                    args.DrawingSession.DrawRectangle((float)_cornerSelectionRect.X, (float)_cornerSelectionRect.Y, (float)_cornerSelectionRect.Width, (float)_cornerSelectionRect.Height, Microsoft.UI.Colors.DodgerBlue, 2.0f);
+                    args.DrawingSession.FillRectangle((float)_cornerSelectionRect.X, (float)_cornerSelectionRect.Y, (float)_cornerSelectionRect.Width, (float)_cornerSelectionRect.Height, Windows.UI.Color.FromArgb(51, 30, 144, 255));
+                }
+            }
+        }
 
-                // 1. Line Ends Snapping (Shift + Drag)
+        // --- NEW GEOMETRIC HIT-TESTING ---
+        private const float HitTolerance = 10.0f;
+        private (MosaicEdge? edge, DragMode mode) HitTestEdges(Windows.Foundation.Point pos)
+        {
+            // Dynamically scale the tolerance based on how far the image is zoomed out
+            float currentZoom = ImageScrollViewer.ZoomFactor;
+            float dynamicTolerance = HitTolerance / currentZoom;
+
+            foreach (var edge in _mosaicEdges)
+            {
+                var startPt = new System.Numerics.Vector2((float)edge.X, (float)edge.Y);
+                var endPt = edge.IsVertical
+                    ? new System.Numerics.Vector2((float)edge.X, (float)edge.Y + (float)edge.Length)
+                    : new System.Numerics.Vector2((float)edge.X + (float)edge.Length, (float)edge.Y);
+                var mousePt = new System.Numerics.Vector2((float)pos.X, (float)pos.Y);
+
+                // Check handles using the dynamic radius
+                if (System.Numerics.Vector2.Distance(mousePt, startPt) <= dynamicTolerance) return (edge, DragMode.StartHandle);
+                if (System.Numerics.Vector2.Distance(mousePt, endPt) <= dynamicTolerance) return (edge, DragMode.EndHandle);
+
+                // Check line bodies using dynamic thickness and pad the length so you don't miss near the edges
+                if (edge.IsVertical)
+                {
+                    if (Math.Abs(pos.X - edge.X) <= dynamicTolerance && pos.Y >= edge.Y - dynamicTolerance && pos.Y <= edge.Y + edge.Length + dynamicTolerance)
+                        return (edge, DragMode.Body);
+                }
+                else
+                {
+                    if (Math.Abs(pos.Y - edge.Y) <= dynamicTolerance && pos.X >= edge.X - dynamicTolerance && pos.X <= edge.X + edge.Length + dynamicTolerance)
+                        return (edge, DragMode.Body);
+                }
+            }
+            return (null, DragMode.None);
+        }
+
+        private async void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        {
+            var point = e.GetCurrentPoint(OverlayCanvas);
+
+            // ADD THIS: Start panning on middle mouse button
+            if (point.Properties.IsMiddleButtonPressed)
+            {
+                _isPanning = true;
+                _lastPanScreenPos = e.GetCurrentPoint(null).Position;
+                OverlayCanvas.CapturePointer(e.Pointer);
+                e.Handled = true;
+                return;
+            }
+
+            var pos = point.Position; // Automatically mapped to image coordinates by WinUI 3
+
+            if (_isMosaicMode)
+            {
+                var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift);
+                var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
+                bool isShiftPressed = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+                bool isCtrlPressed = (ctrlState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+
                 if (point.Properties.IsLeftButtonPressed && isShiftPressed)
                 {
                     _isSelectingLineEnds = true;
                     _selectionStartPos = pos;
-                    CornerSelectionBox.Stroke = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.DodgerBlue);
-                    Canvas.SetLeft(CornerSelectionBox, pos.X);
-                    Canvas.SetTop(CornerSelectionBox, pos.Y);
-                    CornerSelectionBox.Width = 0;
-                    CornerSelectionBox.Height = 0;
-                    CornerSelectionBox.Visibility = Visibility.Visible;
+                    _cornerSelectionRect = new Windows.Foundation.Rect(pos.X, pos.Y, 0, 0);
                     OverlayCanvas.CapturePointer(e.Pointer);
                     e.Handled = true;
                     return;
                 }
 
-                // 2. Right Mouse Button: Context Menu
+                var hitResult = HitTestEdges(pos);
+
                 if (point.Properties.IsRightButtonPressed)
                 {
                     var flyout = new Microsoft.UI.Xaml.Controls.MenuFlyout();
 
-                    if (e.OriginalSource is FrameworkElement element && element.Tag is MosaicEdge clickedEdge)
+                    if (hitResult.edge != null)
                     {
-                        var toggleItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Toggle Orientation" };
-                        toggleItem.Click += (s, args) => clickedEdge.ToggleOrientation();
-                        flyout.Items.Add(toggleItem);
+                        // Ensure the right-clicked item is part of the selection
+                        if (!_selectedEdges.Contains(hitResult.edge))
+                        {
+                            _selectedEdges.Clear();
+                            _selectedEdges.Add(hitResult.edge);
+                            ImageCanvas.Invalidate();
+                        }
 
-                        var duplicateItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Duplicate Line" };
+                        if (_selectedEdges.Count == 1)
+                        {
+                            var toggleItem = new MenuFlyoutItem { Text = "Toggle Orientation" };
+                            toggleItem.Click += (s, args) => { hitResult.edge.ToggleOrientation(); ImageCanvas.Invalidate(); };
+                            flyout.Items.Add(toggleItem);
+                        }
+
+                        var duplicateItem = new MenuFlyoutItem { Text = $"Duplicate {_selectedEdges.Count} Lines" };
                         duplicateItem.Click += (s, args) =>
                         {
-                            double newX = clickedEdge.IsVertical ? clickedEdge.X + 20 : clickedEdge.X;
-                            double newY = clickedEdge.IsVertical ? clickedEdge.Y : clickedEdge.Y + 20;
-                            var newEdge = new MosaicEdge(clickedEdge.IsVertical, newX, newY, clickedEdge.Length);
-                            newEdge.AddToCanvas(OverlayCanvas);
-                            _mosaicEdges.Add(newEdge);
+                            var newSelection = new HashSet<MosaicEdge>();
+
+                            // Group selected lines by orientation and sort them to analyze the pattern
+                            var vSelected = _selectedEdges.Where(e => e.IsVertical).OrderBy(e => e.X).ToList();
+                            var hSelected = _selectedEdges.Where(e => !e.IsVertical).OrderBy(e => e.Y).ToList();
+
+                            double GetSmartOffset(List<MosaicEdge> selected, bool isVert)
+                            {
+                                if (selected.Count >= 2)
+                                {
+                                    // Multi-select: Calculate average gap. Offset the whole block by (Gap * Count).
+                                    double min = isVert ? selected.First().X : selected.First().Y;
+                                    double max = isVert ? selected.Last().X : selected.Last().Y;
+                                    double avgGap = (max - min) / (selected.Count - 1);
+                                    double offset = avgGap * selected.Count;
+                                    return offset > 0 ? offset : 20.0;
+                                }
+                                else if (selected.Count == 1)
+                                {
+                                    // Single-select: Find the closest adjacent line in the global list
+                                    var globalEdges = _mosaicEdges.Where(e => e.IsVertical == isVert).OrderBy(e => isVert ? e.X : e.Y).ToList();
+                                    if (globalEdges.Count >= 2)
+                                    {
+                                        int idx = globalEdges.IndexOf(selected[0]);
+                                        double offset = 0;
+
+                                        // Prefer spacing to the right/bottom, otherwise use left/top
+                                        if (idx >= 0 && idx < globalEdges.Count - 1)
+                                            offset = isVert ? globalEdges[idx + 1].X - globalEdges[idx].X : globalEdges[idx + 1].Y - globalEdges[idx].Y;
+                                        else if (idx > 0)
+                                            offset = isVert ? globalEdges[idx].X - globalEdges[idx - 1].X : globalEdges[idx].Y - globalEdges[idx - 1].Y;
+
+                                        if (offset > 0) return offset;
+                                    }
+                                }
+                                return 20.0; // Fallback if no pattern exists
+                            }
+
+                            double vOffset = GetSmartOffset(vSelected, true);
+                            double hOffset = GetSmartOffset(hSelected, false);
+
+                            foreach (var edge in _selectedEdges)
+                            {
+                                double newX = edge.IsVertical ? edge.X + vOffset : edge.X;
+                                double newY = edge.IsVertical ? edge.Y : edge.Y + hOffset;
+
+                                var newEdge = new MosaicEdge(edge.IsVertical, newX, newY, edge.Length);
+                                _mosaicEdges.Add(newEdge);
+                                newSelection.Add(newEdge);
+                            }
+
+                            _selectedEdges = newSelection;
+                            ImageCanvas.Invalidate();
                         };
+
                         flyout.Items.Add(duplicateItem);
 
-                        var deleteItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Delete Line" };
+                        var deleteItem = new MenuFlyoutItem { Text = $"Delete {_selectedEdges.Count} Lines" };
                         deleteItem.Click += (s, args) =>
                         {
-                            clickedEdge.RemoveFromCanvas(OverlayCanvas);
-                            _mosaicEdges.Remove(clickedEdge);
+                            foreach (var edge in _selectedEdges) _mosaicEdges.Remove(edge);
+                            _selectedEdges.Clear();
+                            ImageCanvas.Invalidate();
                         };
                         flyout.Items.Add(deleteItem);
                     }
                     else
                     {
-                        var vItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Add Vertical Line" };
-                        vItem.Click += (s, args) =>
-                        {
-                            var newEdge = new MosaicEdge(true, pos.X, pos.Y, 100);
-                            newEdge.AddToCanvas(OverlayCanvas);
-                            _mosaicEdges.Add(newEdge);
-                        };
+                        var vItem = new MenuFlyoutItem { Text = "Add Vertical Line" };
+                        vItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(true, pos.X, pos.Y, 100)); ImageCanvas.Invalidate(); };
                         flyout.Items.Add(vItem);
 
-                        var hItem = new Microsoft.UI.Xaml.Controls.MenuFlyoutItem { Text = "Add Horizontal Line" };
-                        hItem.Click += (s, args) =>
-                        {
-                            var newEdge = new MosaicEdge(false, pos.X, pos.Y, 100);
-                            newEdge.AddToCanvas(OverlayCanvas);
-                            _mosaicEdges.Add(newEdge);
-                        };
+                        var hItem = new MenuFlyoutItem { Text = "Add Horizontal Line" };
+                        hItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(false, pos.X, pos.Y, 100)); ImageCanvas.Invalidate(); };
                         flyout.Items.Add(hItem);
                     }
 
-                    flyout.ShowAt(OverlayCanvas, pos);
+                    flyout.ShowAt(OverlayCanvas, point.Position);
                     e.Handled = true;
                     return;
                 }
 
-                // 3. Left Mouse Button: Drag or Resize Edge
                 if (point.Properties.IsLeftButtonPressed)
                 {
-                    if (e.OriginalSource is FrameworkElement element && element.Tag is MosaicEdge edge)
+                    if (hitResult.edge != null)
                     {
-                        _activeEdge = edge;
-                        _lastMousePos = pos;
-
-                        if (element == edge.HitboxLine) _dragMode = DragMode.Body;
-                        else if (element == edge.StartHandle) _dragMode = DragMode.StartHandle;
-                        else if (element == edge.EndHandle) _dragMode = DragMode.EndHandle;
-
-                        OverlayCanvas.CapturePointer(e.Pointer);
+                        if (isCtrlPressed)
+                        {
+                            if (_selectedEdges.Contains(hitResult.edge)) _selectedEdges.Remove(hitResult.edge);
+                            else _selectedEdges.Add(hitResult.edge);
+                        }
+                        else
+                        {
+                            if (!_selectedEdges.Contains(hitResult.edge))
+                            {
+                                _selectedEdges.Clear();
+                                _selectedEdges.Add(hitResult.edge);
+                            }
+                            _activeEdge = hitResult.edge;
+                            _dragMode = hitResult.mode;
+                            _lastMousePos = pos;
+                            OverlayCanvas.CapturePointer(e.Pointer);
+                        }
+                        ImageCanvas.Invalidate();
                         e.Handled = true;
+                    }
+                    else if (!isCtrlPressed)
+                    {
+                        // Clear selection if clicking empty space without CTRL
+                        _selectedEdges.Clear();
+                        ImageCanvas.Invalidate();
                     }
                 }
                 return;
             }
 
-            // --- REGION MODE LOGIC ---
             if (!_isRegionMode) return;
             int size = _cropSizes[CropSizeComboBox.SelectedIndex];
-            bool isInside = pos.X >= _regionX && pos.X <= _regionX + size &&
-                            pos.Y >= _regionY && pos.Y <= _regionY + size;
+            bool isInside = pos.X >= _regionX && pos.X <= _regionX + size && pos.Y >= _regionY && pos.Y <= _regionY + size;
 
             if (isInside)
             {
@@ -600,47 +630,60 @@ namespace MosaicAnnotator
             {
                 _isRegionMode = false;
                 _isMosaicMode = true;
-                RegionRect.Visibility = Visibility.Collapsed;
                 EnterMosaicMode();
-
-                // Zoom and center the camera after the mode is fully initialized
                 await ZoomToFitCropBox();
             }
         }
 
-        // --- MOUSE MOVED ---
         private void OverlayCanvas_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
+            // ADD THIS: Drive the ScrollViewer in real-time
+            if (_isPanning)
+            {
+                var screenPos = e.GetCurrentPoint(null).Position;
+                double dx = _lastPanScreenPos.X - screenPos.X;
+                double dy = _lastPanScreenPos.Y - screenPos.Y;
+
+                // The 'true' parameter disables the slide animation for perfect 1:1 mouse sync
+                ImageScrollViewer.ChangeView(
+                    ImageScrollViewer.HorizontalOffset + dx,
+                    ImageScrollViewer.VerticalOffset + dy,
+                    null,
+                    true);
+
+                _lastPanScreenPos = screenPos;
+                return;
+            }
+
             var point = e.GetCurrentPoint(OverlayCanvas);
             var pos = point.Position;
 
             if (_isSelectingLineEnds)
             {
-                double x = System.Math.Min(pos.X, _selectionStartPos.X);
-                double y = System.Math.Min(pos.Y, _selectionStartPos.Y);
-                double w = System.Math.Abs(pos.X - _selectionStartPos.X);
-                double h = System.Math.Abs(pos.Y - _selectionStartPos.Y);
-
-                Canvas.SetLeft(CornerSelectionBox, x);
-                Canvas.SetTop(CornerSelectionBox, y);
-                CornerSelectionBox.Width = w;
-                CornerSelectionBox.Height = h;
+                double x = Math.Min(pos.X, _selectionStartPos.X);
+                double y = Math.Min(pos.Y, _selectionStartPos.Y);
+                double w = Math.Abs(pos.X - _selectionStartPos.X);
+                double h = Math.Abs(pos.Y - _selectionStartPos.Y);
+                _cornerSelectionRect = new Windows.Foundation.Rect(x, y, w, h);
+                ImageCanvas.Invalidate();
                 return;
             }
 
             if (_isMosaicMode && _activeEdge != null)
             {
-                // Calculate the distance from the last known mouse position once
                 double dx = pos.X - _lastMousePos.X;
                 double dy = pos.Y - _lastMousePos.Y;
 
-                // Move or resize the line exactly once per frame
-                if (_dragMode == DragMode.Body) _activeEdge.Move(dx, dy);
+                // If dragging the body, move ALL selected edges together
+                if (_dragMode == DragMode.Body)
+                {
+                    foreach (var edge in _selectedEdges) edge.Move(dx, dy);
+                }
                 else if (_dragMode == DragMode.StartHandle) _activeEdge.ResizeStart(dx, dy);
                 else if (_dragMode == DragMode.EndHandle) _activeEdge.ResizeEnd(dx, dy);
 
-                // Update the tracker for the next frame
                 _lastMousePos = pos;
+                ImageCanvas.Invalidate();
                 return;
             }
 
@@ -661,26 +704,30 @@ namespace MosaicAnnotator
                 if (_regionX + size > imgWidth) _regionX = imgWidth - size;
                 if (_regionY + size > imgHeight) _regionY = imgHeight - size;
 
-                Canvas.SetLeft(RegionRect, _regionX);
-                Canvas.SetTop(RegionRect, _regionY);
-
                 _lastMousePos = pos;
+                ImageCanvas.Invalidate();
             }
         }
 
-        // --- MOUSE RELEASED ---
         private void OverlayCanvas_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
+            // ADD THIS: Stop panning
+            if (_isPanning)
+            {
+                _isPanning = false;
+                OverlayCanvas.ReleasePointerCapture(e.Pointer);
+                return;
+            }
+
             if (_isSelectingLineEnds)
             {
                 _isSelectingLineEnds = false;
-                CornerSelectionBox.Visibility = Visibility.Collapsed;
                 OverlayCanvas.ReleasePointerCapture(e.Pointer);
 
-                double rectX = Canvas.GetLeft(CornerSelectionBox);
-                double rectY = Canvas.GetTop(CornerSelectionBox);
-                double rectW = CornerSelectionBox.Width;
-                double rectH = CornerSelectionBox.Height;
+                double rectX = _cornerSelectionRect.X;
+                double rectY = _cornerSelectionRect.Y;
+                double rectW = _cornerSelectionRect.Width;
+                double rectH = _cornerSelectionRect.Height;
 
                 var vEdgesInBox = new List<MosaicEdge>();
                 var hEdgesInBox = new List<MosaicEdge>();
@@ -707,37 +754,27 @@ namespace MosaicAnnotator
                 {
                     bool startInBox = h.X >= rectX && h.X <= rectX + rectW && h.Y >= rectY && h.Y <= rectY + rectH;
                     if (startInBox && vEdgesInBox.Count > 0)
-                    {
-                        var nearestV = vEdgesInBox.OrderBy(v => System.Math.Abs(v.X - h.X)).First();
-                        h.SnapStart(nearestV.X);
-                    }
+                        h.SnapStart(vEdgesInBox.OrderBy(v => Math.Abs(v.X - h.X)).First().X);
 
                     double endX = h.X + h.Length;
                     bool endInBox = endX >= rectX && endX <= rectX + rectW && h.Y >= rectY && h.Y <= rectY + rectH;
                     if (endInBox && vEdgesInBox.Count > 0)
-                    {
-                        var nearestV = vEdgesInBox.OrderBy(v => System.Math.Abs(v.X - endX)).First();
-                        h.SnapEnd(nearestV.X);
-                    }
+                        h.SnapEnd(vEdgesInBox.OrderBy(v => Math.Abs(v.X - endX)).First().X);
                 }
 
                 foreach (var v in _mosaicEdges.Where(edge => edge.IsVertical))
                 {
                     bool startInBox = v.X >= rectX && v.X <= rectX + rectW && v.Y >= rectY && v.Y <= rectY + rectH;
                     if (startInBox && hEdgesInBox.Count > 0)
-                    {
-                        var nearestH = hEdgesInBox.OrderBy(h => System.Math.Abs(h.Y - v.Y)).First();
-                        v.SnapStart(nearestH.Y);
-                    }
+                        v.SnapStart(hEdgesInBox.OrderBy(h => Math.Abs(h.Y - v.Y)).First().Y);
 
                     double endY = v.Y + v.Length;
                     bool endInBox = v.X >= rectX && v.X <= rectX + rectW && endY >= rectY && endY <= rectY + rectH;
                     if (endInBox && hEdgesInBox.Count > 0)
-                    {
-                        var nearestH = hEdgesInBox.OrderBy(h => System.Math.Abs(h.Y - endY)).First();
-                        v.SnapEnd(nearestH.Y);
-                    }
+                        v.SnapEnd(hEdgesInBox.OrderBy(h => Math.Abs(h.Y - endY)).First().Y);
                 }
+
+                ImageCanvas.Invalidate();
                 return;
             }
 
@@ -746,6 +783,7 @@ namespace MosaicAnnotator
                 _activeEdge = null;
                 _dragMode = DragMode.None;
                 OverlayCanvas.ReleasePointerCapture(e.Pointer);
+                ImageCanvas.Invalidate();
                 return;
             }
 
@@ -771,16 +809,13 @@ namespace MosaicAnnotator
                 int delta = e.GetCurrentPoint(OverlayCanvas).Properties.MouseWheelDelta;
 
                 if (delta > 0 && CropSizeComboBox.SelectedIndex < _cropSizes.Length - 1)
-                {
                     CropSizeComboBox.SelectedIndex++;
-                }
                 else if (delta < 0 && CropSizeComboBox.SelectedIndex > 0)
-                {
                     CropSizeComboBox.SelectedIndex--;
-                }
 
                 e.Handled = true;
             }
+            // By NOT setting e.Handled = true when outside the box, the normal ScrollViewer scroll/zoom still works natively!
         }
 
         private async void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -798,22 +833,11 @@ namespace MosaicAnnotator
 
             int size = _cropSizes[CropSizeComboBox.SelectedIndex];
 
+            // Re-enable the Clip geometry that perfectly matches the cropped area
             ImageCanvas.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
             {
                 Rect = new Windows.Foundation.Rect(_regionX, _regionY, size, size)
             };
-
-            double scaleX = ImageScrollViewer.ActualWidth / size;
-            double scaleY = ImageScrollViewer.ActualHeight / size;
-            float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
-
-            double targetOffsetX = ((_regionX + (size / 2.0)) * zoomFactor) - (ImageScrollViewer.ActualWidth / 2.0);
-            double targetOffsetY = ((_regionY + (size / 2.0)) * zoomFactor) - (ImageScrollViewer.ActualHeight / 2.0);
-
-            targetOffsetX = Math.Max(0, targetOffsetX);
-            targetOffsetY = Math.Max(0, targetOffsetY);
-
-            ImageScrollViewer.ChangeView(targetOffsetX, targetOffsetY, zoomFactor);
 
             PrevButton.IsEnabled = false;
             NextButton.IsEnabled = false;
@@ -829,14 +853,12 @@ namespace MosaicAnnotator
             _isRegionMode = true;
 
             ImageCanvas.Clip = null;
-            RegionRect.Visibility = Visibility.Visible;
 
             PrevButton.IsEnabled = _currentIndex > 0;
             NextButton.IsEnabled = _currentIndex < _imageFiles.Count - 1;
             LoadDirectoryButton.IsEnabled = true;
             ClearButton.IsEnabled = true;
 
-            // This handles the math, the margins, and the ChangeView automatically now
             await ZoomToFitImage();
         }
 
@@ -853,12 +875,9 @@ namespace MosaicAnnotator
             double marginY = ImageScrollViewer.ViewportHeight / 2.0;
             ImageWorkArea.Margin = new Thickness(marginX, marginY, marginX, marginY);
 
-            // Force the UI to evaluate the layout
             ImageWorkArea.UpdateLayout();
             ImageScrollViewer.UpdateLayout();
 
-            // The Magic Fix: Yield the UI thread for 50ms so the ScrollViewer 
-            // actually updates its internal scrollable boundaries before we pan.
             await Task.Delay(50);
 
             double scaleX = ImageScrollViewer.ViewportWidth / cropSize;
@@ -868,8 +887,6 @@ namespace MosaicAnnotator
             double cropCenterX = _regionX + (cropSize / 2.0);
             double cropCenterY = _regionY + (cropSize / 2.0);
 
-            // The Corrected Math: Multiply the margin by the zoom factor 
-            // because WinUI scales the padding too!
             double targetX = (marginX + cropCenterX) * targetZoom;
             double targetY = (marginY + cropCenterY) * targetZoom;
 
@@ -890,7 +907,6 @@ namespace MosaicAnnotator
             ImageWorkArea.UpdateLayout();
             ImageScrollViewer.UpdateLayout();
 
-            // Same 50ms delay required here so it doesn't get trapped by the old Mosaic margins
             await Task.Delay(50);
 
             double scaleX = ImageScrollViewer.ViewportWidth / _currentImage.SizeInPixels.Width;
@@ -913,15 +929,11 @@ namespace MosaicAnnotator
         [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("DC1C5A9C-E88A-4DDE-A5A1-60F82A20AEF7")]
         private class FileOpenDialog { }
 
-        // Updated with the correct d57c7288 GUID for .NET 8
         [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("d57c7288-d4ad-4768-be02-9d969532d960"), System.Runtime.InteropServices.InterfaceType(System.Runtime.InteropServices.ComInterfaceType.InterfaceIsIUnknown)]
         private interface IFileDialog
         {
             [System.Runtime.InteropServices.PreserveSig] int Show([System.Runtime.InteropServices.In] IntPtr parent);
-
-            // Updated signature to accept the file filter struct array
             void SetFileTypes([System.Runtime.InteropServices.In] uint cFileTypes, [System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPArray)] COMDLG_FILTERSPEC[] rgFilterSpec);
-
             void SetFileTypeIndex([System.Runtime.InteropServices.In] uint iFileType);
             void GetFileTypeIndex(out uint piFileType);
             void Advise([System.Runtime.InteropServices.In, System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Interface)] object pfde, out uint pdwCookie);
@@ -960,12 +972,12 @@ namespace MosaicAnnotator
         {
             var dialog = (IFileDialog)new FileOpenDialog();
             dialog.GetOptions(out uint options);
-            dialog.SetOptions(options | 0x00000020); // FOS_PICKFOLDERS
+            dialog.SetOptions(options | 0x00000020);
 
-            if (dialog.Show(hwnd) == 0) // S_OK
+            if (dialog.Show(hwnd) == 0)
             {
                 dialog.GetResult(out IShellItem item);
-                item.GetDisplayName(unchecked((int)0x80058000), out string path); // SIGDN_FILESYSPATH
+                item.GetDisplayName(unchecked((int)0x80058000), out string path);
                 return path;
             }
             return null;
@@ -975,7 +987,6 @@ namespace MosaicAnnotator
         {
             var dialog = (IFileDialog)new FileOpenDialog();
 
-            // Set image filters
             var extensions = new COMDLG_FILTERSPEC[]
             {
             new COMDLG_FILTERSPEC { pszName = "Images", pszSpec = "*.png;*.jpg;*.jpeg" },
@@ -984,12 +995,12 @@ namespace MosaicAnnotator
             dialog.SetFileTypes((uint)extensions.Length, extensions);
 
             dialog.GetOptions(out uint options);
-            dialog.SetOptions(options | 0x00000040); // FOS_FORCEFILESYSTEM
+            dialog.SetOptions(options | 0x00000040);
 
-            if (dialog.Show(hwnd) == 0) // S_OK
+            if (dialog.Show(hwnd) == 0)
             {
                 dialog.GetResult(out IShellItem item);
-                item.GetDisplayName(unchecked((int)0x80058000), out string path); // SIGDN_FILESYSPATH
+                item.GetDisplayName(unchecked((int)0x80058000), out string path);
                 return path;
             }
             return null;

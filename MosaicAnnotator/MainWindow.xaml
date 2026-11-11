@@ -78,7 +78,7 @@
         </Grid>
 
         <!-- Main Workspace -->
-        <ScrollViewer x:Name="ImageScrollViewer" Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ZoomMode="Enabled">
+        <ScrollViewer x:Name="ImageScrollViewer" Grid.Row="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Hidden" ZoomMode="Enabled">
             <!-- Renamed WorkspaceGrid to ImageWorkArea to match the C# centering logic -->
             <Grid x:Name="ImageWorkArea" HorizontalAlignment="Center" VerticalAlignment="Center">
 
