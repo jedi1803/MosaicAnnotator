@@ -66,19 +66,11 @@ namespace MosaicAnnotator
             Canvas.SetTop(EndHandle, (IsVertical ? Y + Length : Y) - 10);
         }
 
-        public void Move(double deltaX, double deltaY)
+        public void Move(double dx, double dy)
         {
-            // Compare the absolute values to see which direction the mouse is pulling harder
-            if (System.Math.Abs(deltaX) > System.Math.Abs(deltaY))
-            {
-                X += deltaX; // Move only Left/Right
-            }
-            else
-            {
-                Y += deltaY; // Move only Up/Down
-            }
-
-            UpdateRender();
+            // Allow free 2D movement by default so multi-selected grids don't deform
+            X += dx;
+            Y += dy;
         }
 
         public void ResizeStart(double deltaX, double deltaY)

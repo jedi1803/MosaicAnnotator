@@ -91,11 +91,6 @@
                         PointerMoved="OverlayCanvas_PointerMoved" 
                         PointerReleased="OverlayCanvas_PointerReleased"
                         PointerWheelChanged="OverlayCanvas_PointerWheelChanged">
-
-                    <!-- The interactive green square -->
-                    <Rectangle x:Name="RegionRect" Stroke="Lime" StrokeThickness="2" Fill="#1000FF00" Visibility="Collapsed"/>
-                    <!-- The selection box for Corner Snapping -->
-                    <Rectangle x:Name="CornerSelectionBox" Stroke="DodgerBlue" StrokeThickness="2" StrokeDashArray="2,2" Fill="#331E90FF" Visibility="Collapsed"/>
                 </Canvas>
 
             </Grid>

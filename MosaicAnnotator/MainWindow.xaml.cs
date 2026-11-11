@@ -410,34 +410,39 @@ namespace MosaicAnnotator
         private const float HitTolerance = 10.0f;
         private (MosaicEdge? edge, DragMode mode) HitTestEdges(Windows.Foundation.Point pos)
         {
-            // Dynamically scale the tolerance based on how far the image is zoomed out
             float currentZoom = ImageScrollViewer.ZoomFactor;
             float dynamicTolerance = HitTolerance / currentZoom;
 
             foreach (var edge in _mosaicEdges)
             {
-                var startPt = new System.Numerics.Vector2((float)edge.X, (float)edge.Y);
-                var endPt = edge.IsVertical
-                    ? new System.Numerics.Vector2((float)edge.X, (float)edge.Y + (float)edge.Length)
-                    : new System.Numerics.Vector2((float)edge.X + (float)edge.Length, (float)edge.Y);
-                var mousePt = new System.Numerics.Vector2((float)pos.X, (float)pos.Y);
-
-                // Check handles using the dynamic radius
-                if (System.Numerics.Vector2.Distance(mousePt, startPt) <= dynamicTolerance) return (edge, DragMode.StartHandle);
-                if (System.Numerics.Vector2.Distance(mousePt, endPt) <= dynamicTolerance) return (edge, DragMode.EndHandle);
-
-                // Check line bodies using dynamic thickness and pad the length so you don't miss near the edges
                 if (edge.IsVertical)
                 {
+                    // Check if the mouse is near the vertical line
                     if (Math.Abs(pos.X - edge.X) <= dynamicTolerance && pos.Y >= edge.Y - dynamicTolerance && pos.Y <= edge.Y + edge.Length + dynamicTolerance)
-                        return (edge, DragMode.Body);
+                    {
+                        // Where did the user click along the line's length?
+                        double relativeY = pos.Y - edge.Y;
+
+                        if (relativeY < edge.Length * 0.25) return (edge, DragMode.StartHandle); // Top 25%
+                        if (relativeY > edge.Length * 0.75) return (edge, DragMode.EndHandle);   // Bottom 25%
+                        return (edge, DragMode.Body);                                            // Middle 50%
+                    }
                 }
                 else
                 {
+                    // Check if the mouse is near the horizontal line
                     if (Math.Abs(pos.Y - edge.Y) <= dynamicTolerance && pos.X >= edge.X - dynamicTolerance && pos.X <= edge.X + edge.Length + dynamicTolerance)
-                        return (edge, DragMode.Body);
+                    {
+                        // Where did the user click along the line's length?
+                        double relativeX = pos.X - edge.X;
+
+                        if (relativeX < edge.Length * 0.25) return (edge, DragMode.StartHandle); // Left 25%
+                        if (relativeX > edge.Length * 0.75) return (edge, DragMode.EndHandle);   // Right 25%
+                        return (edge, DragMode.Body);                                            // Middle 50%
+                    }
                 }
             }
+
             return (null, DragMode.None);
         }
 
@@ -674,10 +679,23 @@ namespace MosaicAnnotator
                 double dx = pos.X - _lastMousePos.X;
                 double dy = pos.Y - _lastMousePos.Y;
 
-                // If dragging the body, move ALL selected edges together
+                // Read the Alt key state
+                var altState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu);
+                bool isAltPressed = (altState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+
                 if (_dragMode == DragMode.Body)
                 {
-                    foreach (var edge in _selectedEdges) edge.Move(dx, dy);
+                    double moveX = dx;
+                    double moveY = dy;
+
+                    if (isAltPressed)
+                    {
+                        // Lock movement to the perpendicular axis of the grabbed line
+                        if (_activeEdge.IsVertical) moveY = 0;
+                        else moveX = 0;
+                    }
+
+                    foreach (var edge in _selectedEdges) edge.Move(moveX, moveY);
                 }
                 else if (_dragMode == DragMode.StartHandle) _activeEdge.ResizeStart(dx, dy);
                 else if (_dragMode == DragMode.EndHandle) _activeEdge.ResizeEnd(dx, dy);
@@ -843,6 +861,8 @@ namespace MosaicAnnotator
             NextButton.IsEnabled = false;
             LoadDirectoryButton.IsEnabled = false;
             ClearButton.IsEnabled = false;
+
+            ImageCanvas.Invalidate();
         }
 
         private async Task ExitMosaicMode()
