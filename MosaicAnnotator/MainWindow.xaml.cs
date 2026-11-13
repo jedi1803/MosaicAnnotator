@@ -64,8 +64,6 @@ namespace MosaicAnnotator
         private bool _isPanning = false;
         private Windows.Foundation.Point _lastPanScreenPos;
 
-        private HashSet<MosaicEdge> _selectedEdges = new HashSet<MosaicEdge>();
-
         public MainWindow()
         {
             this.InitializeComponent();
@@ -389,11 +387,9 @@ namespace MosaicAnnotator
                 float x2 = edge.IsVertical ? x1 : x1 + (float)edge.Length;
                 float y2 = edge.IsVertical ? y1 + (float)edge.Length : y1;
 
-                var color = (_activeEdge == edge || _selectedEdges.Contains(edge)) ? Microsoft.UI.Colors.Yellow : Microsoft.UI.Colors.Lime;
+                var color = (_activeEdge == edge) ? Microsoft.UI.Colors.Red : Microsoft.UI.Colors.Lime;
 
                 args.DrawingSession.DrawLine(x1, y1, x2, y2, color, 2.0f);
-                //args.DrawingSession.FillCircle(x1, y1, 4.0f, Microsoft.UI.Colors.White);
-                //args.DrawingSession.FillCircle(x2, y2, 4.0f, Microsoft.UI.Colors.White);
             }
 
             if (_isMosaicMode)
@@ -417,28 +413,22 @@ namespace MosaicAnnotator
             {
                 if (edge.IsVertical)
                 {
-                    // Check if the mouse is near the vertical line
                     if (Math.Abs(pos.X - edge.X) <= dynamicTolerance && pos.Y >= edge.Y - dynamicTolerance && pos.Y <= edge.Y + edge.Length + dynamicTolerance)
                     {
-                        // Where did the user click along the line's length?
                         double relativeY = pos.Y - edge.Y;
-
-                        if (relativeY < edge.Length * 0.25) return (edge, DragMode.StartHandle); // Top 25%
-                        if (relativeY > edge.Length * 0.75) return (edge, DragMode.EndHandle);   // Bottom 25%
-                        return (edge, DragMode.Body);                                            // Middle 50%
+                        if (relativeY < edge.Length * 0.25) return (edge, DragMode.StartHandle);
+                        if (relativeY > edge.Length * 0.75) return (edge, DragMode.EndHandle);   
+                        return (edge, DragMode.Body);                                            
                     }
                 }
                 else
                 {
-                    // Check if the mouse is near the horizontal line
                     if (Math.Abs(pos.Y - edge.Y) <= dynamicTolerance && pos.X >= edge.X - dynamicTolerance && pos.X <= edge.X + edge.Length + dynamicTolerance)
                     {
-                        // Where did the user click along the line's length?
                         double relativeX = pos.X - edge.X;
-
-                        if (relativeX < edge.Length * 0.25) return (edge, DragMode.StartHandle); // Left 25%
-                        if (relativeX > edge.Length * 0.75) return (edge, DragMode.EndHandle);   // Right 25%
-                        return (edge, DragMode.Body);                                            // Middle 50%
+                        if (relativeX < edge.Length * 0.25) return (edge, DragMode.StartHandle); 
+                        if (relativeX > edge.Length * 0.75) return (edge, DragMode.EndHandle);   
+                        return (edge, DragMode.Body);                                            
                     }
                 }
             }
@@ -450,7 +440,6 @@ namespace MosaicAnnotator
         {
             var point = e.GetCurrentPoint(OverlayCanvas);
 
-            // ADD THIS: Start panning on middle mouse button
             if (point.Properties.IsMiddleButtonPressed)
             {
                 _isPanning = true;
@@ -460,14 +449,12 @@ namespace MosaicAnnotator
                 return;
             }
 
-            var pos = point.Position; // Automatically mapped to image coordinates by WinUI 3
+            var pos = point.Position;
 
             if (_isMosaicMode)
             {
                 var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift);
-                var ctrlState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control);
                 bool isShiftPressed = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
-                bool isCtrlPressed = (ctrlState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
 
                 if (point.Properties.IsLeftButtonPressed && isShiftPressed)
                 {
@@ -487,88 +474,37 @@ namespace MosaicAnnotator
 
                     if (hitResult.edge != null)
                     {
-                        // Ensure the right-clicked item is part of the selection
-                        if (!_selectedEdges.Contains(hitResult.edge))
-                        {
-                            _selectedEdges.Clear();
-                            _selectedEdges.Add(hitResult.edge);
-                            ImageCanvas.Invalidate();
-                        }
+                        var clickedEdge = hitResult.edge;
+                        var toggleItem = new MenuFlyoutItem { Text = "Toggle Orientation" };
+                        toggleItem.Click += (s, args) => { clickedEdge.ToggleOrientation(); ImageCanvas.Invalidate(); };
+                        flyout.Items.Add(toggleItem);
 
-                        if (_selectedEdges.Count == 1)
-                        {
-                            var toggleItem = new MenuFlyoutItem { Text = "Toggle Orientation" };
-                            toggleItem.Click += (s, args) => { hitResult.edge.ToggleOrientation(); ImageCanvas.Invalidate(); };
-                            flyout.Items.Add(toggleItem);
-                        }
-
-                        var duplicateItem = new MenuFlyoutItem { Text = $"Duplicate {_selectedEdges.Count} Lines" };
+                        var duplicateItem = new MenuFlyoutItem { Text = "Duplicate Line" };
                         duplicateItem.Click += (s, args) =>
                         {
-                            var newSelection = new HashSet<MosaicEdge>();
-
-                            // Group selected lines by orientation and sort them to analyze the pattern
-                            var vSelected = _selectedEdges.Where(e => e.IsVertical).OrderBy(e => e.X).ToList();
-                            var hSelected = _selectedEdges.Where(e => !e.IsVertical).OrderBy(e => e.Y).ToList();
-
-                            double GetSmartOffset(List<MosaicEdge> selected, bool isVert)
+                            var globalEdges = _mosaicEdges.Where(e => e.IsVertical == clickedEdge.IsVertical).OrderBy(e => clickedEdge.IsVertical ? e.X : e.Y).ToList();
+                            double offset = 20.0;
+                            
+                            if (globalEdges.Count >= 2)
                             {
-                                if (selected.Count >= 2)
-                                {
-                                    // Multi-select: Calculate average gap. Offset the whole block by (Gap * Count).
-                                    double min = isVert ? selected.First().X : selected.First().Y;
-                                    double max = isVert ? selected.Last().X : selected.Last().Y;
-                                    double avgGap = (max - min) / (selected.Count - 1);
-                                    double offset = avgGap * selected.Count;
-                                    return offset > 0 ? offset : 20.0;
-                                }
-                                else if (selected.Count == 1)
-                                {
-                                    // Single-select: Find the closest adjacent line in the global list
-                                    var globalEdges = _mosaicEdges.Where(e => e.IsVertical == isVert).OrderBy(e => isVert ? e.X : e.Y).ToList();
-                                    if (globalEdges.Count >= 2)
-                                    {
-                                        int idx = globalEdges.IndexOf(selected[0]);
-                                        double offset = 0;
-
-                                        // Prefer spacing to the right/bottom, otherwise use left/top
-                                        if (idx >= 0 && idx < globalEdges.Count - 1)
-                                            offset = isVert ? globalEdges[idx + 1].X - globalEdges[idx].X : globalEdges[idx + 1].Y - globalEdges[idx].Y;
-                                        else if (idx > 0)
-                                            offset = isVert ? globalEdges[idx].X - globalEdges[idx - 1].X : globalEdges[idx].Y - globalEdges[idx - 1].Y;
-
-                                        if (offset > 0) return offset;
-                                    }
-                                }
-                                return 20.0; // Fallback if no pattern exists
+                                int idx = globalEdges.IndexOf(clickedEdge);
+                                if (idx >= 0 && idx < globalEdges.Count - 1)
+                                    offset = clickedEdge.IsVertical ? globalEdges[idx + 1].X - globalEdges[idx].X : globalEdges[idx + 1].Y - globalEdges[idx].Y;
+                                else if (idx > 0)
+                                    offset = clickedEdge.IsVertical ? globalEdges[idx].X - globalEdges[idx - 1].X : globalEdges[idx].Y - globalEdges[idx - 1].Y;
                             }
+                            if (offset <= 0) offset = 20.0;
 
-                            double vOffset = GetSmartOffset(vSelected, true);
-                            double hOffset = GetSmartOffset(hSelected, false);
-
-                            foreach (var edge in _selectedEdges)
-                            {
-                                double newX = edge.IsVertical ? edge.X + vOffset : edge.X;
-                                double newY = edge.IsVertical ? edge.Y : edge.Y + hOffset;
-
-                                var newEdge = new MosaicEdge(edge.IsVertical, newX, newY, edge.Length);
-                                _mosaicEdges.Add(newEdge);
-                                newSelection.Add(newEdge);
-                            }
-
-                            _selectedEdges = newSelection;
+                            double newX = clickedEdge.IsVertical ? clickedEdge.X + offset : clickedEdge.X;
+                            double newY = clickedEdge.IsVertical ? clickedEdge.Y : clickedEdge.Y + offset;
+                            
+                            _mosaicEdges.Add(new MosaicEdge(clickedEdge.IsVertical, newX, newY, clickedEdge.Length));
                             ImageCanvas.Invalidate();
                         };
-
                         flyout.Items.Add(duplicateItem);
 
-                        var deleteItem = new MenuFlyoutItem { Text = $"Delete {_selectedEdges.Count} Lines" };
-                        deleteItem.Click += (s, args) =>
-                        {
-                            foreach (var edge in _selectedEdges) _mosaicEdges.Remove(edge);
-                            _selectedEdges.Clear();
-                            ImageCanvas.Invalidate();
-                        };
+                        var deleteItem = new MenuFlyoutItem { Text = "Delete Line" };
+                        deleteItem.Click += (s, args) => { _mosaicEdges.Remove(clickedEdge); ImageCanvas.Invalidate(); };
                         flyout.Items.Add(deleteItem);
                     }
                     else
@@ -591,30 +527,16 @@ namespace MosaicAnnotator
                 {
                     if (hitResult.edge != null)
                     {
-                        if (isCtrlPressed)
-                        {
-                            if (_selectedEdges.Contains(hitResult.edge)) _selectedEdges.Remove(hitResult.edge);
-                            else _selectedEdges.Add(hitResult.edge);
-                        }
-                        else
-                        {
-                            if (!_selectedEdges.Contains(hitResult.edge))
-                            {
-                                _selectedEdges.Clear();
-                                _selectedEdges.Add(hitResult.edge);
-                            }
-                            _activeEdge = hitResult.edge;
-                            _dragMode = hitResult.mode;
-                            _lastMousePos = pos;
-                            OverlayCanvas.CapturePointer(e.Pointer);
-                        }
+                        _activeEdge = hitResult.edge;
+                        _dragMode = hitResult.mode;
+                        _lastMousePos = pos;
+                        OverlayCanvas.CapturePointer(e.Pointer);
                         ImageCanvas.Invalidate();
                         e.Handled = true;
                     }
-                    else if (!isCtrlPressed)
+                    else
                     {
-                        // Clear selection if clicking empty space without CTRL
-                        _selectedEdges.Clear();
+                        _activeEdge = null;
                         ImageCanvas.Invalidate();
                     }
                 }
@@ -642,14 +564,12 @@ namespace MosaicAnnotator
 
         private void OverlayCanvas_PointerMoved(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
-            // ADD THIS: Drive the ScrollViewer in real-time
             if (_isPanning)
             {
                 var screenPos = e.GetCurrentPoint(null).Position;
                 double dx = _lastPanScreenPos.X - screenPos.X;
                 double dy = _lastPanScreenPos.Y - screenPos.Y;
 
-                // The 'true' parameter disables the slide animation for perfect 1:1 mouse sync
                 ImageScrollViewer.ChangeView(
                     ImageScrollViewer.HorizontalOffset + dx,
                     ImageScrollViewer.VerticalOffset + dy,
@@ -679,7 +599,6 @@ namespace MosaicAnnotator
                 double dx = pos.X - _lastMousePos.X;
                 double dy = pos.Y - _lastMousePos.Y;
 
-                // Read the Alt key state
                 var altState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu);
                 bool isAltPressed = (altState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
 
@@ -690,12 +609,11 @@ namespace MosaicAnnotator
 
                     if (isAltPressed)
                     {
-                        // Lock movement to the perpendicular axis of the grabbed line
                         if (_activeEdge.IsVertical) moveY = 0;
                         else moveX = 0;
                     }
 
-                    foreach (var edge in _selectedEdges) edge.Move(moveX, moveY);
+                    _activeEdge.Move(moveX, moveY);
                 }
                 else if (_dragMode == DragMode.StartHandle) _activeEdge.ResizeStart(dx, dy);
                 else if (_dragMode == DragMode.EndHandle) _activeEdge.ResizeEnd(dx, dy);
@@ -729,7 +647,6 @@ namespace MosaicAnnotator
 
         private void OverlayCanvas_PointerReleased(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
-            // ADD THIS: Stop panning
             if (_isPanning)
             {
                 _isPanning = false;
@@ -833,7 +750,6 @@ namespace MosaicAnnotator
 
                 e.Handled = true;
             }
-            // By NOT setting e.Handled = true when outside the box, the normal ScrollViewer scroll/zoom still works natively!
         }
 
         private async void RootGrid_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
@@ -851,7 +767,6 @@ namespace MosaicAnnotator
 
             int size = _cropSizes[CropSizeComboBox.SelectedIndex];
 
-            // Re-enable the Clip geometry that perfectly matches the cropped area
             ImageCanvas.Clip = new Microsoft.UI.Xaml.Media.RectangleGeometry
             {
                 Rect = new Windows.Foundation.Rect(_regionX, _regionY, size, size)
