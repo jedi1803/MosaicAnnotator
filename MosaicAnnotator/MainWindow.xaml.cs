@@ -385,11 +385,16 @@ namespace MosaicAnnotator
 
             args.DrawingSession.DrawImage(imageToDraw);
 
+            // Calculate dynamic thickness based on zoom
+            float currentZoom = ImageScrollViewer.ZoomFactor;
+            float dynamicThickness = 2.0f / currentZoom;
+            float markRadius = 5.0f / currentZoom;
+
             if (_isRegionMode)
             {
                 int size = _cropSizes[CropSizeComboBox.SelectedIndex];
                 args.DrawingSession.FillRectangle((float)_regionX, (float)_regionY, size, size, Windows.UI.Color.FromArgb(16, 0, 255, 0));
-                args.DrawingSession.DrawRectangle((float)_regionX, (float)_regionY, size, size, Microsoft.UI.Colors.Lime, 2.0f);
+                args.DrawingSession.DrawRectangle((float)_regionX, (float)_regionY, size, size, Microsoft.UI.Colors.Lime, dynamicThickness);
             }
 
             foreach (var edge in _mosaicEdges)
@@ -401,7 +406,7 @@ namespace MosaicAnnotator
 
                 var color = (_activeEdge == edge) ? Microsoft.UI.Colors.Red : Microsoft.UI.Colors.Lime;
 
-                args.DrawingSession.DrawLine(x1, y1, x2, y2, color, 2.0f);
+                args.DrawingSession.DrawLine(x1, y1, x2, y2, color, dynamicThickness);
             }
 
             foreach (var mark in _mosaicMarks)
@@ -409,17 +414,17 @@ namespace MosaicAnnotator
                 var markColor = (_activeMark == mark) ? Microsoft.UI.Colors.Yellow : Microsoft.UI.Colors.Cyan;
                 float mx = (float)mark.X;
                 float my = (float)mark.Y;
-                
+
                 // Draw the 'x'
-                args.DrawingSession.DrawLine(mx - 5, my - 5, mx + 5, my + 5, markColor, 2.0f);
-                args.DrawingSession.DrawLine(mx - 5, my + 5, mx + 5, my - 5, markColor, 2.0f);
+                args.DrawingSession.DrawLine(mx - markRadius, my - markRadius, mx + markRadius, my + markRadius, markColor, dynamicThickness);
+                args.DrawingSession.DrawLine(mx - markRadius, my + markRadius, mx + markRadius, my - markRadius, markColor, dynamicThickness);
             }
 
             if (_isMosaicMode)
             {
                 if (_isSelectingLineEnds)
                 {
-                    args.DrawingSession.DrawRectangle((float)_cornerSelectionRect.X, (float)_cornerSelectionRect.Y, (float)_cornerSelectionRect.Width, (float)_cornerSelectionRect.Height, Microsoft.UI.Colors.DodgerBlue, 2.0f);
+                    args.DrawingSession.DrawRectangle((float)_cornerSelectionRect.X, (float)_cornerSelectionRect.Y, (float)_cornerSelectionRect.Width, (float)_cornerSelectionRect.Height, Microsoft.UI.Colors.DodgerBlue, dynamicThickness);
                     args.DrawingSession.FillRectangle((float)_cornerSelectionRect.X, (float)_cornerSelectionRect.Y, (float)_cornerSelectionRect.Width, (float)_cornerSelectionRect.Height, Windows.UI.Color.FromArgb(51, 30, 144, 255));
                 }
             }
@@ -898,6 +903,9 @@ namespace MosaicAnnotator
             NextButton.IsEnabled = _currentIndex < _imageFiles.Count - 1;
             LoadDirectoryButton.IsEnabled = true;
             ClearButton.IsEnabled = true;
+
+            // Force the canvas to redraw and show the green crop square
+            ImageCanvas.Invalidate();
 
             await ZoomToFitImage();
         }
