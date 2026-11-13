@@ -37,6 +37,13 @@ namespace MosaicAnnotator
         public List<MosaicLineData> MosaicLines { get; set; } = new List<MosaicLineData>();
     }
 
+    public class MosaicMark
+    {
+        public double X { get; set; }
+        public double Y { get; set; }
+        public MosaicMark(double x, double y) { X = x; Y = y; }
+    }
+
     public sealed partial class MainWindow : Window
     {
         private CanvasBitmap? _currentImage;
@@ -53,6 +60,9 @@ namespace MosaicAnnotator
 
         private List<MosaicEdge> _mosaicEdges = new List<MosaicEdge>();
         private MosaicEdge? _activeEdge = null;
+
+        private List<MosaicMark> _mosaicMarks = new List<MosaicMark>();
+        private MosaicMark? _activeMark = null;
 
         private enum DragMode { None, Body, StartHandle, EndHandle }
         private DragMode _dragMode = DragMode.None;
@@ -179,6 +189,7 @@ namespace MosaicAnnotator
             string fullJsonPath = System.IO.Path.Combine(jsonDir, jsonFileName);
 
             _mosaicEdges.Clear();
+            _mosaicMarks.Clear();
             _isMosaicMode = false;
             _isRegionMode = true;
 
@@ -244,6 +255,7 @@ namespace MosaicAnnotator
             }
 
             _mosaicEdges.Clear();
+            _mosaicMarks.Clear();
             _isMosaicMode = false;
             _isRegionMode = true;
             UpdateRegionRectSize();
@@ -392,6 +404,17 @@ namespace MosaicAnnotator
                 args.DrawingSession.DrawLine(x1, y1, x2, y2, color, 2.0f);
             }
 
+            foreach (var mark in _mosaicMarks)
+            {
+                var markColor = (_activeMark == mark) ? Microsoft.UI.Colors.Yellow : Microsoft.UI.Colors.Cyan;
+                float mx = (float)mark.X;
+                float my = (float)mark.Y;
+                
+                // Draw the 'x'
+                args.DrawingSession.DrawLine(mx - 5, my - 5, mx + 5, my + 5, markColor, 2.0f);
+                args.DrawingSession.DrawLine(mx - 5, my + 5, mx + 5, my - 5, markColor, 2.0f);
+            }
+
             if (_isMosaicMode)
             {
                 if (_isSelectingLineEnds)
@@ -402,8 +425,21 @@ namespace MosaicAnnotator
             }
         }
 
-        // --- NEW GEOMETRIC HIT-TESTING ---
         private const float HitTolerance = 10.0f;
+        
+        private MosaicMark? HitTestMarks(Windows.Foundation.Point pos)
+        {
+            float currentZoom = ImageScrollViewer.ZoomFactor;
+            float dynamicTolerance = HitTolerance / currentZoom;
+
+            foreach (var mark in _mosaicMarks)
+            {
+                if (Math.Abs(pos.X - mark.X) <= dynamicTolerance && Math.Abs(pos.Y - mark.Y) <= dynamicTolerance)
+                    return mark;
+            }
+            return null;
+        }
+
         private (MosaicEdge? edge, DragMode mode) HitTestEdges(Windows.Foundation.Point pos)
         {
             float currentZoom = ImageScrollViewer.ZoomFactor;
@@ -436,7 +472,7 @@ namespace MosaicAnnotator
             return (null, DragMode.None);
         }
 
-        private async void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
+        private void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
             var point = e.GetCurrentPoint(OverlayCanvas);
 
@@ -453,8 +489,9 @@ namespace MosaicAnnotator
 
             if (_isMosaicMode)
             {
-                var shiftState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Shift);
-                bool isShiftPressed = (shiftState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+                // Direct hardware read
+                bool isShiftPressed = NativeInterop.IsShiftPressed();
+                bool isCtrlPressed = NativeInterop.IsCtrlPressed();
 
                 if (point.Properties.IsLeftButtonPressed && isShiftPressed)
                 {
@@ -466,13 +503,37 @@ namespace MosaicAnnotator
                     return;
                 }
 
+                // Ctrl + Left Click = Place 'x' mark
+                if (point.Properties.IsLeftButtonPressed && isCtrlPressed)
+                {
+                    _mosaicMarks.Add(new MosaicMark(pos.X, pos.Y));
+                    ImageCanvas.Invalidate();
+                    e.Handled = true;
+                    return;
+                }
+
+                var hitMark = HitTestMarks(pos);
                 var hitResult = HitTestEdges(pos);
 
                 if (point.Properties.IsRightButtonPressed)
                 {
                     var flyout = new Microsoft.UI.Xaml.Controls.MenuFlyout();
 
-                    if (hitResult.edge != null)
+                    if (hitMark != null)
+                    {
+                        var hLineItem = new MenuFlyoutItem { Text = "Create Short H-Line Here" };
+                        hLineItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(false, hitMark.X - 25, hitMark.Y, 50)); _mosaicMarks.Remove(hitMark); ImageCanvas.Invalidate(); };
+                        flyout.Items.Add(hLineItem);
+
+                        var vLineItem = new MenuFlyoutItem { Text = "Create Short V-Line Here" };
+                        vLineItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(true, hitMark.X, hitMark.Y - 25, 50)); _mosaicMarks.Remove(hitMark); ImageCanvas.Invalidate(); };
+                        flyout.Items.Add(vLineItem);
+
+                        var delItem = new MenuFlyoutItem { Text = "Delete Mark" };
+                        delItem.Click += (s, args) => { _mosaicMarks.Remove(hitMark); ImageCanvas.Invalidate(); };
+                        flyout.Items.Add(delItem);
+                    }
+                    else if (hitResult.edge != null)
                     {
                         var clickedEdge = hitResult.edge;
                         var toggleItem = new MenuFlyoutItem { Text = "Toggle Orientation" };
@@ -482,9 +543,9 @@ namespace MosaicAnnotator
                         var duplicateItem = new MenuFlyoutItem { Text = "Duplicate Line" };
                         duplicateItem.Click += (s, args) =>
                         {
-                            var globalEdges = _mosaicEdges.Where(e => e.IsVertical == clickedEdge.IsVertical).OrderBy(e => clickedEdge.IsVertical ? e.X : e.Y).ToList();
+                            var globalEdges = _mosaicEdges.Where(ed => ed.IsVertical == clickedEdge.IsVertical).OrderBy(ed => clickedEdge.IsVertical ? ed.X : ed.Y).ToList();
                             double offset = 20.0;
-                            
+
                             if (globalEdges.Count >= 2)
                             {
                                 int idx = globalEdges.IndexOf(clickedEdge);
@@ -497,7 +558,7 @@ namespace MosaicAnnotator
 
                             double newX = clickedEdge.IsVertical ? clickedEdge.X + offset : clickedEdge.X;
                             double newY = clickedEdge.IsVertical ? clickedEdge.Y : clickedEdge.Y + offset;
-                            
+
                             _mosaicEdges.Add(new MosaicEdge(clickedEdge.IsVertical, newX, newY, clickedEdge.Length));
                             ImageCanvas.Invalidate();
                         };
@@ -509,6 +570,23 @@ namespace MosaicAnnotator
                     }
                     else
                     {
+                        if (_mosaicMarks.Count > 0)
+                        {
+                            var batchHItem = new MenuFlyoutItem { Text = "Convert All Marks to Short H-Lines" };
+                            batchHItem.Click += (s, args) => { foreach (var m in _mosaicMarks) _mosaicEdges.Add(new MosaicEdge(false, m.X - 25, m.Y, 50)); _mosaicMarks.Clear(); ImageCanvas.Invalidate(); };
+                            flyout.Items.Add(batchHItem);
+
+                            var batchVItem = new MenuFlyoutItem { Text = "Convert All Marks to Short V-Lines" };
+                            batchVItem.Click += (s, args) => { foreach (var m in _mosaicMarks) _mosaicEdges.Add(new MosaicEdge(true, m.X, m.Y - 25, 50)); _mosaicMarks.Clear(); ImageCanvas.Invalidate(); };
+                            flyout.Items.Add(batchVItem);
+
+                            var clearMarksItem = new MenuFlyoutItem { Text = "Clear All Marks" };
+                            clearMarksItem.Click += (s, args) => { _mosaicMarks.Clear(); ImageCanvas.Invalidate(); };
+                            flyout.Items.Add(clearMarksItem);
+
+                            flyout.Items.Add(new MenuFlyoutSeparator());
+                        }
+
                         var vItem = new MenuFlyoutItem { Text = "Add Vertical Line" };
                         vItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(true, pos.X, pos.Y, 100)); ImageCanvas.Invalidate(); };
                         flyout.Items.Add(vItem);
@@ -525,7 +603,15 @@ namespace MosaicAnnotator
 
                 if (point.Properties.IsLeftButtonPressed)
                 {
-                    if (hitResult.edge != null)
+                    if (hitMark != null)
+                    {
+                        _activeMark = hitMark;
+                        _lastMousePos = pos;
+                        OverlayCanvas.CapturePointer(e.Pointer);
+                        ImageCanvas.Invalidate();
+                        e.Handled = true;
+                    }
+                    else if (hitResult.edge != null)
                     {
                         _activeEdge = hitResult.edge;
                         _dragMode = hitResult.mode;
@@ -558,7 +644,7 @@ namespace MosaicAnnotator
                 _isRegionMode = false;
                 _isMosaicMode = true;
                 EnterMosaicMode();
-                await ZoomToFitCropBox();
+                _ = ZoomToFitCropBox();
             }
         }
 
@@ -594,13 +680,24 @@ namespace MosaicAnnotator
                 return;
             }
 
+            if (_isMosaicMode && _activeMark != null)
+            {
+                double dx = pos.X - _lastMousePos.X;
+                double dy = pos.Y - _lastMousePos.Y;
+                _activeMark.X += dx;
+                _activeMark.Y += dy;
+                _lastMousePos = pos;
+                ImageCanvas.Invalidate();
+                return;
+            }
+
             if (_isMosaicMode && _activeEdge != null)
             {
                 double dx = pos.X - _lastMousePos.X;
                 double dy = pos.Y - _lastMousePos.Y;
 
-                var altState = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Menu);
-                bool isAltPressed = (altState & Windows.UI.Core.CoreVirtualKeyStates.Down) == Windows.UI.Core.CoreVirtualKeyStates.Down;
+                // Direct hardware read for Alt
+                bool isAltPressed = NativeInterop.IsAltPressed();
 
                 if (_dragMode == DragMode.Body)
                 {
@@ -709,6 +806,14 @@ namespace MosaicAnnotator
                         v.SnapEnd(hEdgesInBox.OrderBy(h => Math.Abs(h.Y - endY)).First().Y);
                 }
 
+                ImageCanvas.Invalidate();
+                return;
+            }
+
+            if (_isMosaicMode && _activeMark != null)
+            {
+                _activeMark = null;
+                OverlayCanvas.ReleasePointerCapture(e.Pointer);
                 ImageCanvas.Invalidate();
                 return;
             }
@@ -854,6 +959,13 @@ namespace MosaicAnnotator
 
     public static class NativeInterop
     {
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(int vKey);
+
+        public static bool IsShiftPressed() => (GetAsyncKeyState(0x10) & 0x8000) != 0;
+        public static bool IsCtrlPressed() => (GetAsyncKeyState(0x11) & 0x8000) != 0;
+        public static bool IsAltPressed() => (GetAsyncKeyState(0x12) & 0x8000) != 0;
+
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential, CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
         public struct COMDLG_FILTERSPEC
         {
