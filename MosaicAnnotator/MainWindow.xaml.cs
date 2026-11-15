@@ -60,6 +60,7 @@ namespace MosaicAnnotator
 
         private List<MosaicEdge> _mosaicEdges = new List<MosaicEdge>();
         private MosaicEdge? _activeEdge = null;
+        private List<MosaicEdge> _errorEdges = new List<MosaicEdge>();
 
         private List<MosaicMark> _mosaicMarks = new List<MosaicMark>();
         private MosaicMark? _activeMark = null;
@@ -301,6 +302,47 @@ namespace MosaicAnnotator
         {
             if (_currentImage == null || _currentIndex < 0 || _imageFiles.Count == 0) return;
 
+            // --- BATCH OVERLAP VALIDATION ---
+            _errorEdges.Clear();
+            double tolerance = 2.0;
+
+            for (int i = 0; i < _mosaicEdges.Count; i++)
+            {
+                for (int j = i + 1; j < _mosaicEdges.Count; j++)
+                {
+                    var e1 = _mosaicEdges[i];
+                    var e2 = _mosaicEdges[j];
+
+                    if (e1.IsVertical != e2.IsVertical) continue;
+
+                    bool isOverlap = e1.IsVertical
+                        ? (Math.Abs(e1.X - e2.X) < tolerance && Math.Max(e1.Y, e2.Y) < Math.Min(e1.Y + e1.Length, e2.Y + e2.Length))
+                        : (Math.Abs(e1.Y - e2.Y) < tolerance && Math.Max(e1.X, e2.X) < Math.Min(e1.X + e1.Length, e2.X + e2.Length));
+
+                    if (isOverlap)
+                    {
+                        if (!_errorEdges.Contains(e1)) _errorEdges.Add(e1);
+                        if (!_errorEdges.Contains(e2)) _errorEdges.Add(e2);
+                    }
+                }
+            }
+
+            if (_errorEdges.Count > 0)
+            {
+                ImageCanvas.Invalidate();
+
+                var dialog = new ContentDialog
+                {
+                    Title = "Overlaps Detected",
+                    Content = $"Found {_errorEdges.Count} overlapping lines (highlighted in red). Please delete the duplicates before exporting.",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+                return; // Abort export
+            }
+            // --- END OVERLAP VALIDATION ---
+
             var projectData = new MosaicProjectData
             {
                 ImageFileName = _imageFiles[_currentIndex].Name,
@@ -404,7 +446,7 @@ namespace MosaicAnnotator
                 float x2 = edge.IsVertical ? x1 : x1 + (float)edge.Length;
                 float y2 = edge.IsVertical ? y1 + (float)edge.Length : y1;
 
-                var color = (_activeEdge == edge) ? Microsoft.UI.Colors.Red : Microsoft.UI.Colors.Lime;
+                var color = (_activeEdge == edge || _errorEdges.Contains(edge)) ? Microsoft.UI.Colors.Red : Microsoft.UI.Colors.Lime;
 
                 args.DrawingSession.DrawLine(x1, y1, x2, y2, color, dynamicThickness);
             }
@@ -479,6 +521,12 @@ namespace MosaicAnnotator
 
         private void OverlayCanvas_PointerPressed(object sender, Microsoft.UI.Xaml.Input.PointerRoutedEventArgs e)
         {
+            if (_errorEdges.Count > 0)
+            {
+                _errorEdges.Clear();
+                ImageCanvas.Invalidate();
+            }
+
             var point = e.GetCurrentPoint(OverlayCanvas);
 
             if (point.Properties.IsMiddleButtonPressed)
