@@ -33,6 +33,7 @@ namespace MosaicAnnotator
     public class MosaicProjectData
     {
         public string ImageFileName { get; set; } = string.Empty;
+        public int TotalRectangles { get; set; }
         public CropWindowData CropWindow { get; set; } = new CropWindowData();
         public List<MosaicLineData> MosaicLines { get; set; } = new List<MosaicLineData>();
     }
@@ -346,6 +347,7 @@ namespace MosaicAnnotator
             var projectData = new MosaicProjectData
             {
                 ImageFileName = _imageFiles[_currentIndex].Name,
+                TotalRectangles = CountMosaicRectangles(),
                 CropWindow = new CropWindowData
                 {
                     X = _regionX,
@@ -1010,6 +1012,74 @@ namespace MosaicAnnotator
             float zoomFactor = (float)Math.Min(scaleX, scaleY) * 0.95f;
 
             ImageScrollViewer.ChangeView(null, null, zoomFactor);
+        }
+
+        private int CountMosaicRectangles()
+        {
+            var hLines = _mosaicEdges.Where(e => !e.IsVertical).ToList();
+            var vLines = _mosaicEdges.Where(e => e.IsVertical).ToList();
+            int rectangleCount = 0;
+            double tol = 2.0;
+
+            foreach (var top in hLines)
+            {
+                foreach (var bottom in hLines)
+                {
+                    if (top.Y + tol >= bottom.Y) continue; // Top must be strictly above bottom
+
+                    foreach (var left in vLines)
+                    {
+                        foreach (var right in vLines)
+                        {
+                            if (left.X + tol >= right.X) continue; // Left must be strictly left of right
+
+                            // Check if the 4 segments physically intersect to form this specific box
+                            bool topCovers = top.X - tol <= left.X && (top.X + top.Length + tol) >= right.X;
+                            bool bottomCovers = bottom.X - tol <= left.X && (bottom.X + bottom.Length + tol) >= right.X;
+                            bool leftCovers = left.Y - tol <= top.Y && (left.Y + left.Length + tol) >= bottom.Y;
+                            bool rightCovers = right.Y - tol <= top.Y && (right.Y + right.Length + tol) >= bottom.Y;
+
+                            if (topCovers && bottomCovers && leftCovers && rightCovers)
+                            {
+                                bool isAtomic = true; // Assume it's a valid empty cell until proven otherwise
+
+                                // Check if any other horizontal line crosses inside the box
+                                foreach (var h in hLines)
+                                {
+                                    if (h == top || h == bottom) continue;
+                                    if (h.Y > top.Y + tol && h.Y < bottom.Y - tol)
+                                    {
+                                        if (h.X - tol < right.X && (h.X + h.Length + tol) > left.X)
+                                        {
+                                            isAtomic = false;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (!isAtomic) continue;
+
+                                // Check if any other vertical line crosses inside the box
+                                foreach (var v in vLines)
+                                {
+                                    if (v == left || v == right) continue;
+                                    if (v.X > left.X + tol && v.X < right.X - tol)
+                                    {
+                                        if (v.Y - tol < bottom.Y && (v.Y + v.Length + tol) > top.Y)
+                                        {
+                                            isAtomic = false;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (isAtomic) rectangleCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            return rectangleCount;
         }
     }
 
