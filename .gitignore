@@ -482,3 +482,21 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# =========================================================================
+# Custom Rules: MosaicAnnotator & AI Agent Token Protection
+# =========================================================================
+
+# Ignore large JSON datasets to prevent API quota exhaustion during workspace indexing
+_mosaic.json
+
+# Ignore raw and processed video files
+*.mp4
+*.avi
+*.mkv
+*.mov
+
+# Ignore extracted image frames and crop windows
+*.png
+*.jpg
+*.jpeg
