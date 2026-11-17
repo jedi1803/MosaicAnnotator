@@ -6,75 +6,77 @@
     xmlns:canvas="using:Microsoft.Graphics.Canvas.UI.Xaml"
     Title="Mosaic Annotator">
 
-    <Grid x:Name="RootGrid" PreviewKeyDown="RootGrid_PreviewKeyDown">
+    <Grid x:Name="RootGrid" PreviewKeyDown="RootGrid_PreviewKeyDown" Loaded="RootGrid_Loaded">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
         <!-- Top Command Bar -->
-        <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <!-- Load Buttons -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Prev -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Status (1 / 10) -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Next -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Margin -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Crop Size -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Contrast -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Export -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Clear (NEW) -->
-                <ColumnDefinition Width="*"/>
-                <!-- Spacer -->
-                <ColumnDefinition Width="Auto"/>
-                <!-- Filename -->
-            </Grid.ColumnDefinitions>
+        <Grid Grid.Row="0" Padding="10" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                <StackPanel Orientation="Horizontal" Spacing="15" VerticalAlignment="Center">
 
-            <StackPanel Orientation="Horizontal" Grid.Column="0" Margin="0,0,10,0">
-                <Button x:Name="LoadImageButton" Content="Load Image" Click="LoadImageButton_Click" Margin="0,0,10,0"/>
-                <Button x:Name="LoadDirectoryButton" Content="Load Directory" Click="LoadDirectoryButton_Click"/>
-            </StackPanel>
+                    <!-- File Operations -->
+                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                        <Button x:Name="LoadImageButton" Content="Load Image" Click="LoadImageButton_Click"/>
+                        <Button x:Name="LoadDirectoryButton" Content="Load Directory" Click="LoadDirectoryButton_Click"/>
+                    </StackPanel>
 
-            <Button x:Name="PrevButton" Content="&lt;" Click="PrevButton_Click" Grid.Column="1" IsEnabled="False"/>
-            <TextBlock x:Name="FileStatusText" Text="0 / 0" VerticalAlignment="Center" Margin="10,0" Grid.Column="2"/>
-            <Button x:Name="NextButton" Content="&gt;" Click="NextButton_Click" Grid.Column="3" IsEnabled="False"/>
+                    <AppBarSeparator VerticalAlignment="Center"/>
 
-            <StackPanel Orientation="Horizontal" Grid.Column="5" Margin="20,0,0,0">
-                <TextBlock Text="Crop Size" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <ComboBox x:Name="CropSizeComboBox" SelectedIndex="1" SelectionChanged="CropSizeComboBox_SelectionChanged">
-                    <ComboBoxItem Content="256"/>
-                    <ComboBoxItem Content="512"/>
-                    <ComboBoxItem Content="768"/>
-                    <ComboBoxItem Content="1024"/>
-                </ComboBox>
-            </StackPanel>
+                    <!-- Navigation -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Button x:Name="PrevButton" Content="&lt;" Click="PrevButton_Click" IsEnabled="False"/>
+                        <TextBlock x:Name="FileStatusText" Text="0 / 0" VerticalAlignment="Center" Width="60" TextAlignment="Center"/>
+                        <Button x:Name="NextButton" Content="&gt;" Click="NextButton_Click" IsEnabled="False"/>
+                    </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Grid.Column="6" Margin="20,0,0,0">
-                <!-- 1. Your Original Contrast Slider -->
-                <TextBlock Text="Image Contrast" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <Slider x:Name="ContrastSlider" Minimum="0" Maximum="2" StepFrequency="0.1" Value="1" Width="150" ValueChanged="ContrastSlider_ValueChanged"/>
-                <!-- 2. New Shadow Lift Slider -->
-                <TextBlock Text="Shadows" VerticalAlignment="Center" Margin="10,0,5,0"/>
-                <Slider x:Name="ShadowSlider" Minimum="0" Maximum="1" StepFrequency="0.1" Value="0" Width="70" ValueChanged="ShadowSlider_ValueChanged"/>
-                <!-- 3. New X-Ray Toggle -->
-                <ToggleButton x:Name="EdgeModeToggle" Content="X-Ray" Margin="10,0,0,0" Padding="5,4" Click="EdgeModeToggle_Click" />
-            </StackPanel>
+                    <AppBarSeparator VerticalAlignment="Center"/>
 
-            <Button x:Name="ExportButton" Content="Export Crop &amp; Mask" Click="ExportButton_Click" Grid.Column="7" Margin="20,0,0,0"/>
+                    <!-- Crop Size -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <TextBlock Text="Crop Size" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="CropSizeComboBox" SelectedIndex="1" SelectionChanged="CropSizeComboBox_SelectionChanged" Width="80">
+                            <ComboBoxItem Content="256"/>
+                            <ComboBoxItem Content="512"/>
+                            <ComboBoxItem Content="768"/>
+                            <ComboBoxItem Content="1024"/>
+                        </ComboBox>
+                    </StackPanel>
 
-            <!-- NEW: Clear Annotations Button -->
-            <Button x:Name="ClearButton" Content="Clear Annotations" Click="ClearButton_Click" Grid.Column="8" Margin="10,0,0,0" Foreground="IndianRed"/>
+                    <AppBarSeparator VerticalAlignment="Center"/>
 
-            <TextBlock x:Name="FileNameText" Text="" VerticalAlignment="Center" HorizontalAlignment="Right" Grid.Column="10" Margin="0,0,20,0" FontWeight="Bold"/>
+                    <!-- Image Adjustments -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <TextBlock Text="Contrast" VerticalAlignment="Center"/>
+                        <Slider x:Name="ContrastSlider" Minimum="0" Maximum="2" Value="1" StepFrequency="0.1" Width="100" VerticalAlignment="Center" ValueChanged="ContrastSlider_ValueChanged"/>
+
+                        <TextBlock Text="Shadows" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                        <Slider x:Name="ShadowSlider" Minimum="0" Maximum="1" Value="0" StepFrequency="0.1" Width="80" VerticalAlignment="Center" ValueChanged="ShadowSlider_ValueChanged"/>
+
+                        <TextBlock Text="Sharpen" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                        <Slider x:Name="SharpenSlider" Minimum="0" Maximum="10" Value="0" StepFrequency="0.5" Width="100" VerticalAlignment="Center" ValueChanged="Filter_ValueChanged"/>
+                    </StackPanel>
+
+                    <AppBarSeparator VerticalAlignment="Center"/>
+
+                    <!-- Rendering Modes -->
+                    <ToggleButton x:Name="EmbossToggle" Content="Emboss Mode" Click="Filter_Click" VerticalAlignment="Center"/>
+
+                    <AppBarSeparator VerticalAlignment="Center"/>
+
+                    <!-- Actions -->
+                    <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <Button x:Name="ExportButton" Content="Export Crop &amp; Mask" Click="ExportButton_Click" Style="{StaticResource AccentButtonStyle}"/>
+                        <Button x:Name="ClearButton" Content="Clear Annotations" Click="ClearButton_Click" Foreground="IndianRed"/>
+                    </StackPanel>
+
+                    <!-- File Name Display -->
+                    <TextBlock x:Name="FileNameText" Text="" VerticalAlignment="Center" Margin="20,0,0,0" FontWeight="Bold"/>
+
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
         <!-- Main Workspace -->

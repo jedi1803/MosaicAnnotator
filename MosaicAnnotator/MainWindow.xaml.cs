@@ -76,9 +76,23 @@ namespace MosaicAnnotator
         private bool _isPanning = false;
         private Windows.Foundation.Point _lastPanScreenPos;
 
+        // NEW: Variables to track the intended offset without waiting for the UI to catch up
+        private double _panTargetX;
+        private double _panTargetY;
+
         public MainWindow()
         {
             this.InitializeComponent();
+        }
+
+        private void RootGrid_Loaded(object sender, RoutedEventArgs e)
+        {
+            IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            Microsoft.UI.WindowId windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
+            Microsoft.UI.Windowing.AppWindow appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
+
+            // Increased to 1800 physical pixels to account for Windows UI scaling
+            appWindow.Resize(new Windows.Graphics.SizeInt32(1800, 900));
         }
 
         private async void LoadImageButton_Click(object sender, RoutedEventArgs e)
@@ -408,7 +422,8 @@ namespace MosaicAnnotator
 
         private void ContrastSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { ImageCanvas?.Invalidate(); }
         private void ShadowSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { ImageCanvas?.Invalidate(); }
-        private void EdgeModeToggle_Click(object sender, RoutedEventArgs e) { ImageCanvas?.Invalidate(); }
+        private void Filter_ValueChanged(object sender, RangeBaseValueChangedEventArgs e) { ImageCanvas?.Invalidate(); }
+        private void Filter_Click(object sender, RoutedEventArgs e) { ImageCanvas?.Invalidate(); }
         private void ImageCanvas_CreateResources(CanvasControl sender, CanvasCreateResourcesEventArgs args) { }
 
         // --- PURE GPU RENDER LOOP (No custom math matrix needed) ---
@@ -418,14 +433,21 @@ namespace MosaicAnnotator
 
             ICanvasImage imageToDraw = _currentImage;
 
+            // 1. Base Contrast (Existing)
             if (ContrastSlider != null && ContrastSlider.Value != 1)
                 imageToDraw = new ContrastEffect { Source = imageToDraw, Contrast = (float)(ContrastSlider.Value - 1) };
 
+            // 2. Shadows (Existing)
             if (ShadowSlider != null && ShadowSlider.Value > 0)
                 imageToDraw = new HighlightsAndShadowsEffect { Source = imageToDraw, Shadows = (float)ShadowSlider.Value };
 
-            if (EdgeModeToggle?.IsChecked == true)
-                imageToDraw = new EdgeDetectionEffect { Source = imageToDraw, Amount = 1.0f, BlurAmount = 0.5f, OverlayEdges = true };
+            // 3. NEW: Sharpen Effect (Amplifies the harsh boundaries of mosaic tiles)
+            if (SharpenSlider != null && SharpenSlider.Value > 0)
+                imageToDraw = new SharpenEffect { Source = imageToDraw, Amount = (float)SharpenSlider.Value };
+
+            // 4. NEW: Emboss Effect (Turns grid lines into 3D stamped ridges)
+            if (EmbossToggle?.IsChecked == true)
+                imageToDraw = new EmbossEffect { Source = imageToDraw, Amount = 5.0f, Angle = 0.785f }; // 45-degree angle
 
             args.DrawingSession.DrawImage(imageToDraw);
 
@@ -535,6 +557,11 @@ namespace MosaicAnnotator
             {
                 _isPanning = true;
                 _lastPanScreenPos = e.GetCurrentPoint(null).Position;
+
+                // Set our custom targets to the initial starting position
+                _panTargetX = ImageScrollViewer.HorizontalOffset;
+                _panTargetY = ImageScrollViewer.VerticalOffset;
+
                 OverlayCanvas.CapturePointer(e.Pointer);
                 e.Handled = true;
                 return;
@@ -708,14 +735,20 @@ namespace MosaicAnnotator
             if (_isPanning)
             {
                 var screenPos = e.GetCurrentPoint(null).Position;
-                double dx = _lastPanScreenPos.X - screenPos.X;
-                double dy = _lastPanScreenPos.Y - screenPos.Y;
 
-                ImageScrollViewer.ChangeView(
-                    ImageScrollViewer.HorizontalOffset + dx,
-                    ImageScrollViewer.VerticalOffset + dy,
-                    null,
-                    true);
+                // Divide the raw screen movement by the zoom factor so panning matches mouse speed 1:1
+                double zoom = ImageScrollViewer.ZoomFactor;
+                if (zoom <= 0) zoom = 1.0; // Safety fallback
+
+                double dx = (_lastPanScreenPos.X - screenPos.X) / zoom;
+                double dy = (_lastPanScreenPos.Y - screenPos.Y) / zoom;
+
+                // Accumulate the movement into our custom variables
+                _panTargetX += dx;
+                _panTargetY += dy;
+
+                // Pass the custom variables, completely ignoring the delayed native offsets
+                ImageScrollViewer.ChangeView(_panTargetX, _panTargetY, null, true);
 
                 _lastPanScreenPos = screenPos;
                 return;
