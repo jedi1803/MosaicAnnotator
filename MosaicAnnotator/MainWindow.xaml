@@ -18,7 +18,7 @@
                 <StackPanel Orientation="Horizontal" Spacing="15" VerticalAlignment="Center">
 
                     <!-- File Operations -->
-                    <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal" Spacing="15" VerticalAlignment="Center" Padding="0,0,0,14">
                         <Button x:Name="LoadImageButton" Content="Load Image" Click="LoadImageButton_Click"/>
                         <Button x:Name="LoadDirectoryButton" Content="Load Directory" Click="LoadDirectoryButton_Click"/>
                     </StackPanel>
@@ -73,7 +73,9 @@
                     </StackPanel>
 
                     <!-- File Name Display -->
-                    <TextBlock x:Name="FileNameText" Text="" VerticalAlignment="Center" Margin="20,0,0,0" FontWeight="Bold"/>
+                    <TextBlock x:Name="FileNameText" Text="" VerticalAlignment="Center" Margin="20,0,0,0" FontWeight="Bold" 
+                               MaxWidth="250" TextTrimming="CharacterEllipsis" 
+                               ToolTipService.ToolTip="{Binding Text, RelativeSource={RelativeSource Mode=Self}}"/>
 
                 </StackPanel>
             </ScrollViewer>
