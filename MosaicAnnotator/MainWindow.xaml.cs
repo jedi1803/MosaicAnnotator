@@ -66,6 +66,8 @@ namespace MosaicAnnotator
         private List<MosaicMark> _mosaicMarks = new List<MosaicMark>();
         private MosaicMark? _activeMark = null;
 
+        private Stack<Action> _undoStack = new Stack<Action>();
+
         private enum DragMode { None, Body, StartHandle, EndHandle }
         private DragMode _dragMode = DragMode.None;
 
@@ -206,6 +208,7 @@ namespace MosaicAnnotator
 
             _mosaicEdges.Clear();
             _mosaicMarks.Clear();
+            _undoStack.Clear();
             _isMosaicMode = false;
             _isRegionMode = true;
 
@@ -272,6 +275,7 @@ namespace MosaicAnnotator
 
             _mosaicEdges.Clear();
             _mosaicMarks.Clear();
+            _undoStack.Clear();
             _isMosaicMode = false;
             _isRegionMode = true;
             UpdateRegionRectSize();
@@ -497,7 +501,7 @@ namespace MosaicAnnotator
         }
 
         private const float HitTolerance = 10.0f;
-        
+
         private MosaicMark? HitTestMarks(Windows.Foundation.Point pos)
         {
             float currentZoom = ImageScrollViewer.ZoomFactor;
@@ -524,8 +528,8 @@ namespace MosaicAnnotator
                     {
                         double relativeY = pos.Y - edge.Y;
                         if (relativeY < edge.Length * 0.25) return (edge, DragMode.StartHandle);
-                        if (relativeY > edge.Length * 0.75) return (edge, DragMode.EndHandle);   
-                        return (edge, DragMode.Body);                                            
+                        if (relativeY > edge.Length * 0.75) return (edge, DragMode.EndHandle);
+                        return (edge, DragMode.Body);
                     }
                 }
                 else
@@ -533,9 +537,9 @@ namespace MosaicAnnotator
                     if (Math.Abs(pos.Y - edge.Y) <= dynamicTolerance && pos.X >= edge.X - dynamicTolerance && pos.X <= edge.X + edge.Length + dynamicTolerance)
                     {
                         double relativeX = pos.X - edge.X;
-                        if (relativeX < edge.Length * 0.25) return (edge, DragMode.StartHandle); 
-                        if (relativeX > edge.Length * 0.75) return (edge, DragMode.EndHandle);   
-                        return (edge, DragMode.Body);                                            
+                        if (relativeX < edge.Length * 0.25) return (edge, DragMode.StartHandle);
+                        if (relativeX > edge.Length * 0.75) return (edge, DragMode.EndHandle);
+                        return (edge, DragMode.Body);
                     }
                 }
             }
@@ -604,11 +608,25 @@ namespace MosaicAnnotator
                     if (hitMark != null)
                     {
                         var hLineItem = new MenuFlyoutItem { Text = "Create Short H-Line Here" };
-                        hLineItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(false, hitMark.X - 25, hitMark.Y, 50)); _mosaicMarks.Remove(hitMark); ImageCanvas.Invalidate(); };
+                        hLineItem.Click += (s, args) =>
+                        {
+                            var newEdge = new MosaicEdge(false, hitMark.X - 25, hitMark.Y, 50);
+                            _mosaicEdges.Add(newEdge);
+                            _mosaicMarks.Remove(hitMark);
+                            _undoStack.Push(() => { _mosaicEdges.Remove(newEdge); _mosaicMarks.Add(hitMark); });
+                            ImageCanvas.Invalidate();
+                        };
                         flyout.Items.Add(hLineItem);
 
                         var vLineItem = new MenuFlyoutItem { Text = "Create Short V-Line Here" };
-                        vLineItem.Click += (s, args) => { _mosaicEdges.Add(new MosaicEdge(true, hitMark.X, hitMark.Y - 25, 50)); _mosaicMarks.Remove(hitMark); ImageCanvas.Invalidate(); };
+                        vLineItem.Click += (s, args) =>
+                        {
+                            var newEdge = new MosaicEdge(true, hitMark.X, hitMark.Y - 25, 50);
+                            _mosaicEdges.Add(newEdge);
+                            _mosaicMarks.Remove(hitMark);
+                            _undoStack.Push(() => { _mosaicEdges.Remove(newEdge); _mosaicMarks.Add(hitMark); });
+                            ImageCanvas.Invalidate();
+                        };
                         flyout.Items.Add(vLineItem);
 
                         var delItem = new MenuFlyoutItem { Text = "Delete Mark" };
@@ -618,6 +636,18 @@ namespace MosaicAnnotator
                     else if (hitResult.edge != null)
                     {
                         var clickedEdge = hitResult.edge;
+                        _activeEdge = clickedEdge;
+                        ImageCanvas.Invalidate();
+
+                        flyout.Closed += (s, args) =>
+                        {
+                            if (_activeEdge == clickedEdge)
+                            {
+                                _activeEdge = null;
+                                ImageCanvas.Invalidate();
+                            }
+                        };
+
                         var toggleItem = new MenuFlyoutItem { Text = "Toggle Orientation" };
                         toggleItem.Click += (s, args) => { clickedEdge.ToggleOrientation(); ImageCanvas.Invalidate(); };
                         flyout.Items.Add(toggleItem);
@@ -647,7 +677,12 @@ namespace MosaicAnnotator
                         flyout.Items.Add(duplicateItem);
 
                         var deleteItem = new MenuFlyoutItem { Text = "Delete Line" };
-                        deleteItem.Click += (s, args) => { _mosaicEdges.Remove(clickedEdge); ImageCanvas.Invalidate(); };
+                        deleteItem.Click += (s, args) =>
+                        {
+                            _mosaicEdges.Remove(clickedEdge);
+                            _undoStack.Push(() => _mosaicEdges.Add(clickedEdge));
+                            ImageCanvas.Invalidate();
+                        };
                         flyout.Items.Add(deleteItem);
                     }
                     else
@@ -655,11 +690,41 @@ namespace MosaicAnnotator
                         if (_mosaicMarks.Count > 0)
                         {
                             var batchHItem = new MenuFlyoutItem { Text = "Convert All Marks to Short H-Lines" };
-                            batchHItem.Click += (s, args) => { foreach (var m in _mosaicMarks) _mosaicEdges.Add(new MosaicEdge(false, m.X - 25, m.Y, 50)); _mosaicMarks.Clear(); ImageCanvas.Invalidate(); };
+                            batchHItem.Click += (s, args) =>
+                            {
+                                var oldMarks = new List<MosaicMark>(_mosaicMarks);
+                                var newEdges = new List<MosaicEdge>();
+
+                                foreach (var m in _mosaicMarks)
+                                {
+                                    var newEdge = new MosaicEdge(false, m.X - 25, m.Y, 50);
+                                    _mosaicEdges.Add(newEdge);
+                                    newEdges.Add(newEdge);
+                                }
+
+                                _mosaicMarks.Clear();
+                                _undoStack.Push(() => { foreach (var ed in newEdges) _mosaicEdges.Remove(ed); _mosaicMarks.AddRange(oldMarks); });
+                                ImageCanvas.Invalidate();
+                            };
                             flyout.Items.Add(batchHItem);
 
                             var batchVItem = new MenuFlyoutItem { Text = "Convert All Marks to Short V-Lines" };
-                            batchVItem.Click += (s, args) => { foreach (var m in _mosaicMarks) _mosaicEdges.Add(new MosaicEdge(true, m.X, m.Y - 25, 50)); _mosaicMarks.Clear(); ImageCanvas.Invalidate(); };
+                            batchVItem.Click += (s, args) =>
+                            {
+                                var oldMarks = new List<MosaicMark>(_mosaicMarks);
+                                var newEdges = new List<MosaicEdge>();
+
+                                foreach (var m in _mosaicMarks)
+                                {
+                                    var newEdge = new MosaicEdge(true, m.X, m.Y - 25, 50);
+                                    _mosaicEdges.Add(newEdge);
+                                    newEdges.Add(newEdge);
+                                }
+
+                                _mosaicMarks.Clear();
+                                _undoStack.Push(() => { foreach (var ed in newEdges) _mosaicEdges.Remove(ed); _mosaicMarks.AddRange(oldMarks); });
+                                ImageCanvas.Invalidate();
+                            };
                             flyout.Items.Add(batchVItem);
 
                             var clearMarksItem = new MenuFlyoutItem { Text = "Clear All Marks" };
@@ -951,6 +1016,15 @@ namespace MosaicAnnotator
             {
                 e.Handled = true;
                 await ExitMosaicMode();
+            }
+            else if (e.Key == Windows.System.VirtualKey.Z && NativeInterop.IsCtrlPressed() && _isMosaicMode)
+            {
+                if (_undoStack.Count > 0)
+                {
+                    _undoStack.Pop().Invoke();
+                    ImageCanvas.Invalidate();
+                    e.Handled = true;
+                }
             }
         }
 
