@@ -59,6 +59,11 @@ namespace MosaicAnnotator
         private double _regionY = 0;
         private readonly int[] _cropSizes = { 256, 512, 768, 1024 };
 
+        private List<string> _regionJsonPaths = new List<string>();
+        private Dictionary<string, CropWindowData> _savedRegionBoxes = new Dictionary<string, CropWindowData>();
+        private string _currentJsonPath = string.Empty;
+        private bool _isUpdatingRegionCombo = false;
+
         private List<MosaicEdge> _mosaicEdges = new List<MosaicEdge>();
         private MosaicEdge? _activeEdge = null;
         private List<MosaicEdge> _errorEdges = new List<MosaicEdge>();
@@ -203,16 +208,75 @@ namespace MosaicAnnotator
             string currentImagePath = _imageFiles[_currentIndex].Path;
             string imageDir = System.IO.Path.GetDirectoryName(currentImagePath)!;
             string jsonDir = System.IO.Path.Combine(imageDir, "json");
-            string jsonFileName = System.IO.Path.GetFileNameWithoutExtension(currentImagePath) + "_mosaic.json";
-            string fullJsonPath = System.IO.Path.Combine(jsonDir, jsonFileName);
+            string baseName = System.IO.Path.GetFileNameWithoutExtension(currentImagePath);
 
+            _regionJsonPaths.Clear();
+            _savedRegionBoxes.Clear();
+
+            if (System.IO.Directory.Exists(jsonDir))
+            {
+                string primaryPath = System.IO.Path.Combine(jsonDir, $"{baseName}_mosaic.json");
+                if (System.IO.File.Exists(primaryPath))
+                    _regionJsonPaths.Add(primaryPath);
+
+                var extraFiles = System.IO.Directory.GetFiles(jsonDir, $"{baseName}_mosaic_*.json")
+                    .OrderBy(f =>
+                    {
+                        string name = System.IO.Path.GetFileNameWithoutExtension(f);
+                        string suffixStr = name.Substring((baseName + "_mosaic_").Length);
+                        return int.TryParse(suffixStr, out int n) ? n : int.MaxValue;
+                    });
+
+                _regionJsonPaths.AddRange(extraFiles);
+            }
+
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            foreach (var path in _regionJsonPaths)
+            {
+                try
+                {
+                    string jsonString = System.IO.File.ReadAllText(path);
+                    var projectData = JsonSerializer.Deserialize<MosaicProjectData>(jsonString, options);
+                    if (projectData != null)
+                        _savedRegionBoxes[path] = projectData.CropWindow;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Failed to cache region box for {path}: {ex.Message}");
+                }
+            }
+
+            _isUpdatingRegionCombo = true;
+            RegionComboBox.Items.Clear();
+
+            if (_regionJsonPaths.Count == 0)
+            {
+                _regionJsonPaths.Add(string.Empty);
+                RegionComboBox.Items.Add("Region 1");
+            }
+            else
+            {
+                for (int i = 0; i < _regionJsonPaths.Count; i++)
+                    RegionComboBox.Items.Add($"Region {i + 1}");
+            }
+
+            RegionComboBox.SelectedIndex = 0;
+            _isUpdatingRegionCombo = false;
+
+            LoadRegionFromPath(_regionJsonPaths[0]);
+        }
+
+        private void LoadRegionFromPath(string fullJsonPath)
+        {
+            _currentJsonPath = fullJsonPath;
             _mosaicEdges.Clear();
             _mosaicMarks.Clear();
             _undoStack.Clear();
+            _errorEdges.Clear();
             _isMosaicMode = false;
             _isRegionMode = true;
 
-            if (System.IO.File.Exists(fullJsonPath))
+            if (!string.IsNullOrEmpty(fullJsonPath) && System.IO.File.Exists(fullJsonPath))
             {
                 try
                 {
@@ -238,9 +302,6 @@ namespace MosaicAnnotator
                         {
                             _mosaicEdges.Add(new MosaicEdge(lineData.IsVertical, lineData.X, lineData.Y, lineData.Length));
                         }
-
-                        _isRegionMode = true;
-                        _isMosaicMode = false;
                     }
                 }
                 catch (Exception ex)
@@ -248,24 +309,52 @@ namespace MosaicAnnotator
                     System.Diagnostics.Debug.WriteLine($"Failed to load existing JSON: {ex.Message}");
                 }
             }
+
+            UpdateRegionRectSize();
+            ImageCanvas?.Invalidate();
+        }
+
+        private void RegionComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isUpdatingRegionCombo || _currentImage == null) return;
+            int idx = RegionComboBox.SelectedIndex;
+            if (idx >= 0 && idx < _regionJsonPaths.Count)
+            {
+                LoadRegionFromPath(_regionJsonPaths[idx]);
+            }
+        }
+
+        private void NewRegionButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentImage == null || _isMosaicMode) return;
+
+            // If an unsaved new region already exists, just select it
+            int unsavedIdx = _regionJsonPaths.IndexOf(string.Empty);
+            if (unsavedIdx != -1)
+            {
+                RegionComboBox.SelectedIndex = unsavedIdx;
+                return;
+            }
+
+            _regionJsonPaths.Add(string.Empty);
+            _isUpdatingRegionCombo = true;
+            RegionComboBox.Items.Add($"Region {_regionJsonPaths.Count} (New)");
+            RegionComboBox.SelectedIndex = _regionJsonPaths.Count - 1;
+            _isUpdatingRegionCombo = false;
+
+            LoadRegionFromPath(string.Empty);
         }
 
         private void ClearButton_Click(object sender, RoutedEventArgs e)
         {
             if (_currentImage == null || _currentIndex < 0 || _imageFiles.Count == 0) return;
 
-            string currentImagePath = _imageFiles[_currentIndex].Path;
-            string imageDir = System.IO.Path.GetDirectoryName(currentImagePath)!;
-            string jsonDir = System.IO.Path.Combine(imageDir, "json");
-            string jsonFileName = System.IO.Path.GetFileNameWithoutExtension(currentImagePath) + "_mosaic.json";
-            string fullJsonPath = System.IO.Path.Combine(jsonDir, jsonFileName);
-
-            if (System.IO.File.Exists(fullJsonPath))
+            if (!string.IsNullOrEmpty(_currentJsonPath) && System.IO.File.Exists(_currentJsonPath))
             {
                 try
                 {
-                    System.IO.File.SetAttributes(fullJsonPath, System.IO.FileAttributes.Normal);
-                    System.IO.File.Delete(fullJsonPath);
+                    System.IO.File.SetAttributes(_currentJsonPath, System.IO.FileAttributes.Normal);
+                    System.IO.File.Delete(_currentJsonPath);
                 }
                 catch (Exception ex)
                 {
@@ -273,13 +362,7 @@ namespace MosaicAnnotator
                 }
             }
 
-            _mosaicEdges.Clear();
-            _mosaicMarks.Clear();
-            _undoStack.Clear();
-            _isMosaicMode = false;
-            _isRegionMode = true;
-            UpdateRegionRectSize();
-            ImageCanvas.Invalidate();
+            LoadExistingJsonData();
         }
 
         private void UpdateRegionRectSize()
@@ -394,8 +477,23 @@ namespace MosaicAnnotator
 
             System.IO.Directory.CreateDirectory(jsonDir);
 
-            string jsonFileName = System.IO.Path.GetFileNameWithoutExtension(projectData.ImageFileName) + "_mosaic.json";
-            string fullSavePath = System.IO.Path.Combine(jsonDir, jsonFileName);
+            string fullSavePath;
+            if (!string.IsNullOrEmpty(_currentJsonPath))
+            {
+                fullSavePath = _currentJsonPath;
+            }
+            else
+            {
+                string baseName = System.IO.Path.GetFileNameWithoutExtension(projectData.ImageFileName);
+                fullSavePath = System.IO.Path.Combine(jsonDir, $"{baseName}_mosaic.json");
+
+                int suffix = 2;
+                while (System.IO.File.Exists(fullSavePath))
+                {
+                    fullSavePath = System.IO.Path.Combine(jsonDir, $"{baseName}_mosaic_{suffix}.json");
+                    suffix++;
+                }
+            }
 
             System.IO.File.WriteAllText(fullSavePath, jsonString);
 
@@ -421,6 +519,10 @@ namespace MosaicAnnotator
             {
                 _currentIndex = nextUnannotatedIndex;
                 await DisplaySelectedImageAsync();
+            }
+            else
+            {
+                LoadExistingJsonData();
             }
         }
 
@@ -462,6 +564,16 @@ namespace MosaicAnnotator
 
             if (_isRegionMode)
             {
+                // Draw all other saved regions first
+                foreach (var kvp in _savedRegionBoxes)
+                {
+                    if (kvp.Key == _currentJsonPath) continue;
+                    var box = kvp.Value;
+                    args.DrawingSession.FillRectangle((float)box.X, (float)box.Y, box.Size, box.Size, Windows.UI.Color.FromArgb(16, 0, 255, 255));
+                    args.DrawingSession.DrawRectangle((float)box.X, (float)box.Y, box.Size, box.Size, Microsoft.UI.Colors.Cyan, dynamicThickness);
+                }
+
+                // Draw the currently active region on top
                 int size = _cropSizes[CropSizeComboBox.SelectedIndex];
                 args.DrawingSession.FillRectangle((float)_regionX, (float)_regionY, size, size, Windows.UI.Color.FromArgb(16, 0, 255, 0));
                 args.DrawingSession.DrawRectangle((float)_regionX, (float)_regionY, size, size, Microsoft.UI.Colors.Lime, dynamicThickness);
@@ -1043,6 +1155,8 @@ namespace MosaicAnnotator
             NextButton.IsEnabled = false;
             LoadDirectoryButton.IsEnabled = false;
             ClearButton.IsEnabled = false;
+            RegionComboBox.IsEnabled = false;
+            NewRegionButton.IsEnabled = false;
 
             ImageCanvas.Invalidate();
         }
@@ -1060,6 +1174,8 @@ namespace MosaicAnnotator
             NextButton.IsEnabled = _currentIndex < _imageFiles.Count - 1;
             LoadDirectoryButton.IsEnabled = true;
             ClearButton.IsEnabled = true;
+            RegionComboBox.IsEnabled = true;
+            NewRegionButton.IsEnabled = true;
 
             // Force the canvas to redraw and show the green crop square
             ImageCanvas.Invalidate();

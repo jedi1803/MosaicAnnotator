@@ -47,6 +47,13 @@
 
                     <AppBarSeparator VerticalAlignment="Center"/>
 
+                    <!-- Region Selection -->
+                    <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                        <TextBlock Text="Region" VerticalAlignment="Center"/>
+                        <ComboBox x:Name="RegionComboBox" Width="110" SelectionChanged="RegionComboBox_SelectionChanged"/>
+                        <Button x:Name="NewRegionButton" Content="New Region" Click="NewRegionButton_Click"/>
+                    </StackPanel>
+
                     <!-- Image Adjustments -->
                     <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                         <TextBlock Text="Contrast" VerticalAlignment="Center"/>
